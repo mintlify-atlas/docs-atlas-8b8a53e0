@@ -1,0 +1,87 @@
+{
+  "projectType": "saas",
+  "projectName": "YouTube Manager",
+  "projectDescription": "A Django-based SaaS platform for managing YouTube videos with search, save, upload, and privacy control features.",
+  "theme": "mint",
+  "primaryColor": "#FF0000",
+  "lightColor": "#FF6B6B",
+  "darkColor": "#CC0000",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/authentication",
+              "features/video-search",
+              "features/video-management",
+              "features/video-upload"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/google-oauth",
+              "configuration/database"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/overview",
+              "deployment/production"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Components",
+            "pages": [
+              "api/models",
+              "api/views",
+              "api/forms",
+              "api/urls"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Google OAuth authentication with YouTube API integration",
+    "YouTube video search with embeddable results",
+    "Personal video collection management",
+    "Direct video upload to YouTube",
+    "Video privacy control (public, private, unlisted)",
+    "User-specific video tracking and favorites"
+  ],
+  "publicApiSurface": [
+    "VideoGuardado model - Saved/favorited videos",
+    "VideoSubido model - Uploaded videos with privacy states",
+    "login_view - User authentication",
+    "google_login - OAuth flow initiation",
+    "google_callback - OAuth callback handler",
+    "buscar_video - YouTube video search",
+    "guardar_video - Save video to collection",
+    "mi_lista - View saved videos",
+    "eliminar_video - Remove from collection",
+    "subir_video_youtube - Upload video to YouTube",
+    "mis_subidos - View uploaded videos",
+    "cambiar_estado_video - Update video privacy",
+    "borrar_video_subido - Delete uploaded video"
+  ]
+}
