@@ -1,0 +1,260 @@
+---
+title: 'Environment Variables'
+description: 'Configure your YouTube Manager instance using environment variables and python-decouple'
+---
+
+## Overview
+
+YouTube Manager uses `python-decouple` to manage configuration through environment variables. This approach keeps sensitive credentials out of your codebase and allows for easy configuration across different environments.
+
+<Warning>
+  Never commit your `.env` file to version control. Add it to `.gitignore` to prevent exposing sensitive credentials.
+</Warning>
+
+## Required Environment Variables
+
+All configuration is loaded from environment variables using the `decouple` library (see `settings.py:2`).
+
+### Core Django Settings
+
+#### SECRET_KEY
+
+**Required** - Django's secret key for cryptographic signing (settings.py:13)
+
+<Warning>
+  Keep this value secret in production! Generate a secure random string of at least 50 characters.
+</Warning>
+
+```bash
+# Generate a secure secret key
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+#### DEBUG
+
+**Required** - Enable/disable debug mode (settings.py:16)
+
+<Note>
+  Set to `False` in production to prevent exposing sensitive information in error pages.
+</Note>
+
+- Development: `True`
+- Production: `False`
+
+#### ALLOWED_HOSTS
+
+**Required** - Comma-separated list of allowed hostnames (settings.py:18)
+
+<Info>
+  Uses `Csv()` cast from python-decouple to parse comma-separated values into a list.
+</Info>
+
+- Development: `localhost,127.0.0.1`
+- Production: `yourdomain.com,www.yourdomain.com`
+
+### Database Configuration
+
+MySQL database connection settings (settings.py:66-79):
+
+#### DB_NAME
+**Required** - Database name (settings.py:69)
+
+#### DB_USER
+**Required** - Database username (settings.py:70)
+
+#### DB_PASS
+**Required** - Database password (settings.py:71)
+
+#### DB_HOST
+**Required** - Database host (settings.py:72)
+- Development: `localhost` or `127.0.0.1`
+- Production: Your MySQL server hostname
+
+#### DB_PORT
+**Required** - Database port (settings.py:73)
+- Default MySQL port: `3306`
+
+### Google OAuth Configuration
+
+#### GOOGLE_CALLBACK_URL
+
+**Required** - OAuth redirect URI (views.py:35, 53)
+
+<Note>
+  This URL must match exactly with the authorized redirect URI configured in your Google Cloud Console.
+</Note>
+
+Format:
+- Development: `http://localhost:8000/oauth/callback/`
+- Production: `https://yourdomain.com/oauth/callback/`
+
+## .env File Template
+
+Create a `.env` file in your project root directory (same level as `manage.py`):
+
+<CodeGroup>
+
+```bash Development
+# Django Core Settings
+SECRET_KEY=your-development-secret-key-here-at-least-50-characters
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Database Configuration
+DB_NAME=youtube_manager
+DB_USER=root
+DB_PASS=your_mysql_password
+DB_HOST=localhost
+DB_PORT=3306
+
+# Google OAuth
+GOOGLE_CALLBACK_URL=http://localhost:8000/oauth/callback/
+```
+
+```bash Production
+# Django Core Settings
+SECRET_KEY=your-super-secure-production-secret-key-minimum-50-characters-long
+DEBUG=False
+ALLOWED_HOSTS=yourdomain.com,www.yourdomain.com
+
+# Database Configuration
+DB_NAME=youtube_manager_prod
+DB_USER=youtube_app_user
+DB_PASS=strong_production_password_here
+DB_HOST=your-mysql-server.example.com
+DB_PORT=3306
+
+# Google OAuth
+GOOGLE_CALLBACK_URL=https://yourdomain.com/oauth/callback/
+```
+
+</CodeGroup>
+
+## Using python-decouple
+
+The project uses `python-decouple` (version 3.8, see requirements.txt:23) to load environment variables:
+
+```python settings.py
+from decouple import config, Csv
+
+# Load a simple string
+SECRET_KEY = config('SECRET_KEY')
+
+# Load and cast to specific types
+DEBUG = config('DEBUG')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv())
+```
+
+### How It Works
+
+1. `python-decouple` automatically searches for a `.env` file in your project root
+2. Variables are loaded at import time when Django starts
+3. Missing required variables will cause Django to fail at startup with a clear error message
+
+<Tip>
+  Use `.env` for local development and environment variables for production deployment (Docker, Heroku, AWS, etc.)
+</Tip>
+
+## Environment-Specific Configuration
+
+### Development
+
+- `DEBUG=True` enables detailed error pages
+- `ALLOWED_HOSTS` includes localhost
+- `OAUTHLIB_INSECURE_TRANSPORT=1` allows HTTP for OAuth (settings.py:123)
+- `OAUTHLIB_RELAX_TOKEN_SCOPE=1` relaxes scope matching (settings.py:125)
+
+### Production
+
+<Warning>
+  Production deployments require HTTPS for OAuth to work securely. Never use `OAUTHLIB_INSECURE_TRANSPORT` in production.
+</Warning>
+
+- `DEBUG=False` disables debug mode
+- `ALLOWED_HOSTS` includes your domain(s)
+- Use HTTPS for all URLs including `GOOGLE_CALLBACK_URL`
+- Configure static files serving (STATIC_ROOT at settings.py:117)
+- Set up proper database user with limited permissions
+
+## Verification
+
+Test your environment configuration:
+
+```bash
+# Check if Django can load settings
+python manage.py check
+
+# Verify database connection
+python manage.py dbshell
+
+# Test configuration in Django shell
+python manage.py shell
+```
+
+```python
+# In Django shell
+from django.conf import settings
+print(settings.DEBUG)
+print(settings.ALLOWED_HOSTS)
+print(settings.DATABASES['default']['NAME'])
+```
+
+## Security Best Practices
+
+<Warning>
+  **Critical Security Requirements:**
+  
+  - Never commit `.env` to git
+  - Generate unique SECRET_KEY for each environment
+  - Use strong database passwords
+  - Set DEBUG=False in production
+  - Use HTTPS in production
+</Warning>
+
+### .gitignore
+
+Ensure your `.gitignore` includes:
+
+```bash .gitignore
+.env
+*.pyc
+__pycache__/
+db.sqlite3
+/staticfiles/
+/media/
+client_secret.json
+```
+
+## Troubleshooting
+
+### Missing Environment Variable
+
+**Error**: `decouple.UndefinedValueError: SECRET_KEY not found`
+
+**Solution**: Add the missing variable to your `.env` file
+
+### Database Connection Failed
+
+**Error**: `django.db.utils.OperationalError: (2003, "Can't connect to MySQL server")`
+
+**Solution**: 
+- Verify MySQL is running
+- Check `DB_HOST` and `DB_PORT` values
+- Verify database user credentials
+- Ensure database exists
+
+### ALLOWED_HOSTS Error
+
+**Error**: `Invalid HTTP_HOST header: 'yourdomain.com'`
+
+**Solution**: Add the domain to `ALLOWED_HOSTS` in your `.env` file
+
+## Next Steps
+
+<Card title="Google OAuth Setup" icon="google" href="/configuration/google-oauth">
+  Configure Google OAuth 2.0 credentials for YouTube API access
+</Card>
+
+<Card title="Database Setup" icon="database" href="/configuration/database">
+  Set up and configure MySQL database
+</Card>

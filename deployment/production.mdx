@@ -1,0 +1,1033 @@
+---
+title: 'Production Deployment'
+description: 'Step-by-step guide to deploying YouTube Manager to production'
+---
+
+## Production Checklist
+
+Follow this comprehensive checklist to deploy YouTube Manager securely and efficiently.
+
+<Steps>
+  <Step title="Security Configuration">
+    Configure critical security settings before deployment.
+  </Step>
+  
+  <Step title="Database Setup">
+    Prepare and optimize MySQL for production workloads.
+  </Step>
+  
+  <Step title="Static Files">
+    Collect and configure static file serving.
+  </Step>
+  
+  <Step title="Application Server">
+    Install and configure Gunicorn.
+  </Step>
+  
+  <Step title="Web Server">
+    Set up nginx as reverse proxy.
+  </Step>
+  
+  <Step title="Process Management">
+    Configure systemd for automatic startup.
+  </Step>
+  
+  <Step title="OAuth & SSL">
+    Configure Google OAuth and SSL certificates.
+  </Step>
+  
+  <Step title="Monitoring & Backups">
+    Set up logging, monitoring, and backup strategies.
+  </Step>
+</Steps>
+
+## 1. Security Configuration
+
+### DEBUG Mode
+
+<Warning>
+**Critical**: Set `DEBUG = False` in production. Debug mode exposes sensitive information and security vulnerabilities.
+</Warning>
+
+In `settings.py:16`, DEBUG is controlled via environment variable:
+
+```python settings.py
+DEBUG = config('DEBUG')
+```
+
+Update your `.env` file:
+
+```bash .env
+DEBUG=False
+```
+
+### SECRET_KEY
+
+Generate a new, cryptographically secure SECRET_KEY for production:
+
+```bash
+python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'
+```
+
+<Warning>
+**Never** use the development SECRET_KEY in production. Generate a new one and store it securely in your `.env` file.
+</Warning>
+
+Update `.env`:
+
+```bash .env
+SECRET_KEY=your-new-production-secret-key-here
+```
+
+### ALLOWED_HOSTS
+
+Configure allowed hosts in `settings.py:18`:
+
+```python
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv())
+```
+
+Update `.env` with your production domains:
+
+```bash .env
+ALLOWED_HOSTS=yourdomain.com,www.yourdomain.com,your-server-ip
+```
+
+### Security Headers
+
+Add these settings to `settings.py` for production:
+
+```python settings.py
+# HTTPS settings
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
+# Security headers
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+
+# HSTS (HTTP Strict Transport Security)
+SECURE_HSTS_SECONDS = 31536000  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+```
+
+### Remove Development OAuth Settings
+
+<Warning>
+**Remove** the following line from `settings.py:123` in production:
+
+```python
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+```
+
+This setting allows HTTP for OAuth, which is **insecure** in production. OAuth must use HTTPS.
+</Warning>
+
+## 2. Database Setup
+
+### Install MySQL
+
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install mysql-server mysql-client libmysqlclient-dev
+
+# Start MySQL
+sudo systemctl start mysql
+sudo systemctl enable mysql
+```
+
+### Create Production Database
+
+```bash
+sudo mysql -u root -p
+```
+
+```sql
+CREATE DATABASE youtube_manager_prod CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'youtube_user'@'localhost' IDENTIFIED BY 'secure-password-here';
+GRANT ALL PRIVILEGES ON youtube_manager_prod.* TO 'youtube_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+### Configure Database Settings
+
+Update `.env` with production database credentials:
+
+```bash .env
+DB_NAME=youtube_manager_prod
+DB_USER=youtube_user
+DB_PASS=secure-password-here
+DB_HOST=localhost
+DB_PORT=3306
+```
+
+### Production Database Optimizations
+
+Add these options to `DATABASES` configuration in `settings.py`:
+
+```python settings.py
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': config('DB_NAME'),
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASS'),
+        'HOST': config('DB_HOST'),
+        'PORT': config('DB_PORT'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'connect_timeout': 10,
+        },
+        'CONN_MAX_AGE': 600,  # Connection pooling (10 minutes)
+    }
+}
+```
+
+### Run Migrations
+
+```bash
+python manage.py migrate
+```
+
+This creates tables for:
+- `auth_user` - User authentication
+- `core_videoguardado` - Saved favorite videos (models.py:5-18)
+- `core_videosubido` - User-uploaded videos (models.py:21-36)
+- Django admin and sessions
+
+### Create Superuser
+
+```bash
+python manage.py createsuperuser
+```
+
+## 3. Static Files
+
+### Collect Static Files
+
+The `STATIC_ROOT` is configured at `settings.py:117`:
+
+```python
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+```
+
+Collect all static files:
+
+```bash
+python manage.py collectstatic --noinput
+```
+
+This creates the `staticfiles/` directory with all CSS, JavaScript, and images.
+
+<Info>
+The `staticfiles/` directory will contain Django admin assets and any custom static files from the `core` app.
+</Info>
+
+### Media Files Directory
+
+Create the media directory configured at `settings.py:139`:
+
+```bash
+mkdir -p media
+chmod 755 media
+```
+
+<Note>
+Ensure the web server user (usually `www-data` or `nginx`) has write permissions to the `media/` directory for video uploads.
+</Note>
+
+## 4. Application Server Setup
+
+### Install Gunicorn
+
+```bash
+pip install gunicorn
+```
+
+Add to `requirements.txt`:
+
+```txt
+gunicorn==21.2.0
+```
+
+### Test Gunicorn
+
+Test that Gunicorn can serve the application (from `wsgi.py:14`):
+
+```bash
+gunicorn youtube_project.wsgi:application --bind 0.0.0.0:8000
+```
+
+### Gunicorn Configuration
+
+Create `gunicorn_config.py` in your project root:
+
+<CodeGroup>
+
+```python gunicorn_config.py (Basic)
+# Basic Gunicorn configuration
+bind = '127.0.0.1:8000'
+workers = 3
+worker_class = 'sync'
+worker_connections = 1000
+max_requests = 1000
+max_requests_jitter = 50
+timeout = 60
+keepalive = 5
+
+# Logging
+accesslog = '/var/log/gunicorn/access.log'
+errorlog = '/var/log/gunicorn/error.log'
+loglevel = 'info'
+
+# Process naming
+proc_name = 'youtube_manager'
+
+# Server mechanics
+daemon = False
+pidfile = '/var/run/gunicorn/youtube_manager.pid'
+user = 'www-data'
+group = 'www-data'
+```
+
+```python gunicorn_config.py (Production)
+# Production-optimized Gunicorn configuration
+import multiprocessing
+
+bind = '127.0.0.1:8000'
+workers = multiprocessing.cpu_count() * 2 + 1
+worker_class = 'sync'
+worker_connections = 1000
+max_requests = 1000
+max_requests_jitter = 100
+timeout = 120  # Longer timeout for video uploads
+keepalive = 5
+
+# Logging
+accesslog = '/var/log/gunicorn/access.log'
+errorlog = '/var/log/gunicorn/error.log'
+loglevel = 'warning'
+access_log_format = '%({X-Forwarded-For}i)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+
+# Process naming
+proc_name = 'youtube_manager'
+
+# Server mechanics
+daemon = False
+pidfile = '/var/run/gunicorn/youtube_manager.pid'
+user = 'www-data'
+group = 'www-data'
+
+# Performance tuning
+preload_app = True
+```
+
+</CodeGroup>
+
+Create log directory:
+
+```bash
+sudo mkdir -p /var/log/gunicorn
+sudo mkdir -p /var/run/gunicorn
+sudo chown -R www-data:www-data /var/log/gunicorn
+sudo chown -R www-data:www-data /var/run/gunicorn
+```
+
+## 5. Web Server Configuration
+
+### Install nginx
+
+```bash
+sudo apt update
+sudo apt install nginx
+```
+
+### nginx Configuration
+
+Create `/etc/nginx/sites-available/youtube_manager`:
+
+<CodeGroup>
+
+```nginx nginx (HTTP)
+# HTTP configuration (for initial setup/testing)
+server {
+    listen 80;
+    server_name yourdomain.com www.yourdomain.com;
+    
+    client_max_body_size 500M;  # Allow large video uploads
+    
+    # Static files (from settings.py:117)
+    location /static/ {
+        alias /path/to/your/project/staticfiles/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Media files (from settings.py:139)
+    location /media/ {
+        alias /path/to/your/project/media/;
+        expires 7d;
+    }
+    
+    # Proxy to Gunicorn
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+        
+        # Timeout for video uploads
+        proxy_read_timeout 300;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+```
+
+```nginx nginx (HTTPS)
+# HTTPS configuration (production)
+server {
+    listen 80;
+    server_name yourdomain.com www.yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name yourdomain.com www.yourdomain.com;
+    
+    # SSL certificates (Let's Encrypt)
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    client_max_body_size 500M;  # Allow large video uploads
+    
+    # Static files (from settings.py:117)
+    location /static/ {
+        alias /path/to/your/project/staticfiles/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Media files (from settings.py:139)
+    location /media/ {
+        alias /path/to/your/project/media/;
+        expires 7d;
+    }
+    
+    # Proxy to Gunicorn
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+        
+        # Timeout for video uploads
+        proxy_read_timeout 300;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+```
+
+</CodeGroup>
+
+### Enable Site
+
+```bash
+sudo ln -s /etc/nginx/sites-available/youtube_manager /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### SSL Certificate (Let's Encrypt)
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
+```
+
+Certbot will automatically configure SSL and update your nginx configuration.
+
+## 6. Process Management
+
+### systemd Service
+
+Create `/etc/systemd/system/youtube_manager.service`:
+
+<CodeGroup>
+
+```ini systemd (Basic)
+[Unit]
+Description=YouTube Manager Gunicorn Daemon
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+Type=notify
+User=www-data
+Group=www-data
+RuntimeDirectory=gunicorn
+WorkingDirectory=/path/to/your/project
+Environment="PATH=/path/to/your/venv/bin"
+EnvironmentFile=/path/to/your/project/.env
+ExecStart=/path/to/your/venv/bin/gunicorn \
+    --config /path/to/your/project/gunicorn_config.py \
+    youtube_project.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini systemd (Production)
+[Unit]
+Description=YouTube Manager Gunicorn Daemon
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+Type=notify
+User=www-data
+Group=www-data
+RuntimeDirectory=gunicorn
+WorkingDirectory=/path/to/your/project
+Environment="PATH=/path/to/your/venv/bin"
+EnvironmentFile=/path/to/your/project/.env
+ExecStart=/path/to/your/venv/bin/gunicorn \
+    --config /path/to/your/project/gunicorn_config.py \
+    youtube_project.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/path/to/your/project/media
+ReadWritePaths=/var/log/gunicorn
+ReadWritePaths=/var/run/gunicorn
+
+[Install]
+WantedBy=multi-user.target
+```
+
+</CodeGroup>
+
+### Start Service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start youtube_manager
+sudo systemctl enable youtube_manager
+sudo systemctl status youtube_manager
+```
+
+### Supervisor (Alternative)
+
+If you prefer Supervisor over systemd:
+
+```bash
+sudo apt install supervisor
+```
+
+Create `/etc/supervisor/conf.d/youtube_manager.conf`:
+
+```ini
+[program:youtube_manager]
+command=/path/to/your/venv/bin/gunicorn --config /path/to/your/project/gunicorn_config.py youtube_project.wsgi:application
+directory=/path/to/your/project
+user=www-data
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/youtube_manager.log
+environment=PATH="/path/to/your/venv/bin"
+```
+
+Start service:
+
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start youtube_manager
+```
+
+## 7. OAuth Configuration
+
+### Google Cloud Console Setup
+
+<Steps>
+  <Step title="Update Authorized Redirect URIs">
+    In Google Cloud Console → APIs & Services → Credentials:
+    
+    Add your production URLs:
+    - `https://yourdomain.com/oauth2callback`
+    - `https://www.yourdomain.com/oauth2callback`
+  </Step>
+  
+  <Step title="Update Authorized JavaScript Origins">
+    Add:
+    - `https://yourdomain.com`
+    - `https://www.yourdomain.com`
+  </Step>
+  
+  <Step title="Download Updated client_secret.json">
+    Download the updated credentials and replace `client_secret.json` in your project root.
+  </Step>
+</Steps>
+
+<Warning>
+The `client_secret.json` file is excluded from version control (`.gitignore:268`). Deploy it manually to your production server and ensure proper file permissions:
+
+```bash
+chmod 600 client_secret.json
+chown www-data:www-data client_secret.json
+```
+</Warning>
+
+### OAuth Scopes
+
+Configured in `settings.py:129-135`:
+
+```python
+SCOPES = [
+    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.upload',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid'
+]
+```
+
+These scopes allow:
+- YouTube video management
+- Video uploads
+- User profile information
+
+## 8. Monitoring & Logging
+
+### Django Logging Configuration
+
+Add to `settings.py`:
+
+```python settings.py
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': '/var/log/youtube_manager/django.log',
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': '/var/log/youtube_manager/django_error.log',
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['file'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['file', 'error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+```
+
+Create log directory:
+
+```bash
+sudo mkdir -p /var/log/youtube_manager
+sudo chown www-data:www-data /var/log/youtube_manager
+```
+
+### Log Rotation
+
+Create `/etc/logrotate.d/youtube_manager`:
+
+```
+/var/log/youtube_manager/*.log
+/var/log/gunicorn/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    missingok
+    create 0640 www-data www-data
+    sharedscripts
+    postrotate
+        systemctl reload youtube_manager > /dev/null 2>&1 || true
+    endscript
+}
+```
+
+### Monitoring Tools
+
+<CardGroup cols={3}>
+  <Card title="Application Monitoring" icon="chart-line">
+    - Django Debug Toolbar (dev only)
+    - Sentry for error tracking
+    - New Relic APM
+  </Card>
+  
+  <Card title="Server Monitoring" icon="server">
+    - Prometheus + Grafana
+    - Datadog
+    - CloudWatch (AWS)
+  </Card>
+  
+  <Card title="Uptime Monitoring" icon="heartbeat">
+    - UptimeRobot
+    - Pingdom
+    - StatusCake
+  </Card>
+</CardGroup>
+
+## 9. Backup Strategy
+
+### Database Backups
+
+YouTube Manager stores critical user data in two main tables:
+
+- **VideoGuardado** (`core_videoguardado`) - Saved favorite videos
+- **VideoSubido** (`core_videosubido`) - User-uploaded video metadata
+
+#### Automated MySQL Backup Script
+
+Create `/usr/local/bin/backup_youtube_manager.sh`:
+
+```bash backup_youtube_manager.sh
+#!/bin/bash
+
+# Configuration
+DB_NAME="youtube_manager_prod"
+DB_USER="youtube_user"
+DB_PASS="your-password"
+BACKUP_DIR="/var/backups/youtube_manager"
+DATE=$(date +%Y%m%d_%H%M%S)
+FILENAME="youtube_manager_${DATE}.sql.gz"
+RETENTION_DAYS=30
+
+# Create backup directory
+mkdir -p $BACKUP_DIR
+
+# Dump database
+mysqldump -u $DB_USER -p$DB_PASS $DB_NAME | gzip > $BACKUP_DIR/$FILENAME
+
+# Delete old backups
+find $BACKUP_DIR -name "youtube_manager_*.sql.gz" -mtime +$RETENTION_DAYS -delete
+
+echo "Backup completed: $FILENAME"
+```
+
+Make executable and set up cron:
+
+```bash
+sudo chmod +x /usr/local/bin/backup_youtube_manager.sh
+sudo crontab -e
+```
+
+Add daily backup at 2 AM:
+
+```cron
+0 2 * * * /usr/local/bin/backup_youtube_manager.sh >> /var/log/youtube_manager/backup.log 2>&1
+```
+
+### Media Files Backup
+
+<Info>
+Media files in the `media/` directory are **temporary** - they're uploaded to YouTube and can be cleaned up. However, if you need to retain them:
+</Info>
+
+```bash
+# Sync to remote storage (daily)
+rsync -avz --delete /path/to/your/project/media/ user@backup-server:/backups/media/
+```
+
+Or use cloud storage:
+
+```bash
+# AWS S3
+aws s3 sync /path/to/your/project/media/ s3://your-bucket/media/ --delete
+
+# Google Cloud Storage
+gsutil -m rsync -r -d /path/to/your/project/media/ gs://your-bucket/media/
+```
+
+### Restore Process
+
+<Steps>
+  <Step title="Stop application">
+    ```bash
+    sudo systemctl stop youtube_manager
+    ```
+  </Step>
+  
+  <Step title="Restore database">
+    ```bash
+    gunzip < backup_file.sql.gz | mysql -u youtube_user -p youtube_manager_prod
+    ```
+  </Step>
+  
+  <Step title="Restore media files (if needed)">
+    ```bash
+    rsync -avz user@backup-server:/backups/media/ /path/to/your/project/media/
+    ```
+  </Step>
+  
+  <Step title="Start application">
+    ```bash
+    sudo systemctl start youtube_manager
+    ```
+  </Step>
+</Steps>
+
+## 10. Health Checks
+
+### Application Health Endpoint
+
+Create a simple health check view in `core/views.py`:
+
+```python
+from django.http import JsonResponse
+from django.db import connection
+
+def health_check(request):
+    try:
+        # Check database connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        
+        return JsonResponse({
+            'status': 'healthy',
+            'database': 'connected'
+        })
+    except Exception as e:
+        return JsonResponse({
+            'status': 'unhealthy',
+            'error': str(e)
+        }, status=503)
+```
+
+Add to `urls.py`:
+
+```python
+path('health/', views.health_check, name='health_check'),
+```
+
+### Monitor with cron
+
+```bash
+*/5 * * * * curl -f https://yourdomain.com/health/ || echo "Health check failed" | mail -s "YouTube Manager Down" admin@yourdomain.com
+```
+
+## Post-Deployment Checklist
+
+<Steps>
+  <Step title="Verify Configuration">
+    - [ ] `DEBUG = False` in production
+    - [ ] Unique `SECRET_KEY` generated
+    - [ ] `ALLOWED_HOSTS` configured correctly
+    - [ ] `OAUTHLIB_INSECURE_TRANSPORT` removed
+  </Step>
+  
+  <Step title="Test Functionality">
+    - [ ] Homepage loads correctly
+    - [ ] User registration/login works
+    - [ ] Google OAuth authentication works
+    - [ ] Video upload functionality works
+    - [ ] Saved videos display correctly
+    - [ ] Static files load (CSS, JS)
+    - [ ] Admin panel accessible
+  </Step>
+  
+  <Step title="Security Verification">
+    - [ ] SSL certificate valid and auto-renews
+    - [ ] HTTPS redirect working
+    - [ ] Security headers present (check with securityheaders.com)
+    - [ ] No sensitive information in error pages
+    - [ ] `client_secret.json` permissions set to 600
+  </Step>
+  
+  <Step title="Performance Testing">
+    - [ ] Static files served by nginx (not Django)
+    - [ ] Database connection pooling enabled
+    - [ ] Gunicorn worker count optimized
+    - [ ] Large video uploads complete successfully
+  </Step>
+  
+  <Step title="Monitoring Setup">
+    - [ ] Application logs rotating correctly
+    - [ ] Error notifications configured
+    - [ ] Uptime monitoring active
+    - [ ] Database backups running daily
+  </Step>
+</Steps>
+
+## Common Issues
+
+### Static Files Not Loading
+
+**Problem**: CSS/JS not loading, 404 errors
+
+**Solution**:
+```bash
+# Ensure collectstatic was run
+python manage.py collectstatic --noinput
+
+# Check nginx configuration
+sudo nginx -t
+
+# Verify file permissions
+ls -la /path/to/your/project/staticfiles/
+```
+
+### OAuth Redirect Mismatch
+
+**Problem**: "redirect_uri_mismatch" error
+
+**Solution**:
+- Verify URLs in Google Cloud Console match exactly
+- Ensure using HTTPS in production
+- Check `ALLOWED_HOSTS` includes the domain
+
+### 502 Bad Gateway
+
+**Problem**: nginx returns 502 error
+
+**Solution**:
+```bash
+# Check Gunicorn is running
+sudo systemctl status youtube_manager
+
+# Check Gunicorn logs
+sudo tail -f /var/log/gunicorn/error.log
+
+# Verify bind address matches nginx proxy_pass
+```
+
+### Database Connection Errors
+
+**Problem**: "Can't connect to MySQL server"
+
+**Solution**:
+```bash
+# Verify MySQL is running
+sudo systemctl status mysql
+
+# Test connection
+mysql -u youtube_user -p youtube_manager_prod
+
+# Check .env database credentials
+```
+
+## Performance Optimization
+
+### Database Indexing
+
+Add indexes for common queries:
+
+```python
+class VideoGuardado(models.Model):
+    # ...
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-fecha_guardado']),
+            models.Index(fields=['video_id']),
+        ]
+```
+
+### Caching
+
+Add Redis caching:
+
+```bash
+pip install redis django-redis
+```
+
+```python settings.py
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
+```
+
+### CDN for Static Files
+
+Use a CDN for static file delivery:
+
+```python settings.py
+if not DEBUG:
+    STATIC_URL = 'https://cdn.yourdomain.com/static/'
+```
+
+## Conclusion
+
+Your YouTube Manager application is now deployed to production! Make sure to:
+
+- Monitor logs regularly
+- Keep dependencies updated
+- Test backups periodically
+- Review security settings quarterly
+- Scale resources as user base grows
+
+For ongoing maintenance, refer to the monitoring and backup sections above.

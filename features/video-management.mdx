@@ -1,0 +1,297 @@
+---
+title: Video Management
+description: Save, organize, and manage your personal YouTube video collection
+---
+
+## Overview
+
+The video management system allows users to build and maintain a personal collection of YouTube videos. Users can save videos from search results, view their saved collection, and remove videos they no longer want to keep.
+
+<CardGroup cols={2}>
+  <Card title="Personal Collections" icon="bookmark">
+    Save videos to your personal library
+  </Card>
+  <Card title="Video Metadata" icon="database">
+    Store titles, descriptions, thumbnails, and channel info
+  </Card>
+  <Card title="Unique Constraints" icon="shield-check">
+    Prevent duplicate videos per user
+  </Card>
+  <Card title="Easy Management" icon="list">
+    View and delete saved videos
+  </Card>
+</CardGroup>
+
+## VideoGuardado Model
+
+Saved videos are stored using the `VideoGuardado` model (`models.py:5-18`):
+
+```python
+class VideoGuardado(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    video_id = models.CharField(max_length=50)
+    titulo = models.CharField(max_length=255)
+    canal = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    miniatura_url = models.URLField()
+    fecha_guardado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'video_id')
+
+    def __str__(self):
+        return self.titulo
+```
+
+### Model Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | ForeignKey | Links video to the user who saved it |
+| `video_id` | CharField(50) | YouTube video ID (e.g., "dQw4w9WgXcQ") |
+| `titulo` | CharField(255) | Video title |
+| `canal` | CharField(255) | Channel name that uploaded the video |
+| `descripcion` | TextField | Full video description |
+| `miniatura_url` | URLField | Thumbnail image URL |
+| `fecha_guardado` | DateTimeField | Timestamp when video was saved |
+
+### Unique Constraint
+
+The model uses `unique_together = ('user', 'video_id')` to ensure:
+- Each user can only save a specific video once
+- Multiple users can save the same video
+- Prevents duplicate entries in a user's collection
+
+<Note>
+The unique constraint prevents errors when a user attempts to save the same video multiple times. The `get_or_create()` method handles this gracefully.
+</Note>
+
+## Saving Videos
+
+The `guardar_video` view (`views.py:144-167`) handles saving videos to the database:
+
+```python
+@login_required
+def guardar_video(request):
+    if request.method == 'POST':
+        # Obtenemos datos del formulario oculto
+        video_id = request.POST.get('video_id')
+        titulo = request.POST.get('titulo')
+        canal = request.POST.get('canal')
+        descripcion = request.POST.get('descripcion')
+        miniatura = request.POST.get('miniatura')
+        
+        # Guardamos en MySQL
+        VideoGuardado.objects.get_or_create(
+            user=request.user,
+            video_id=video_id,
+            defaults={
+                'titulo': titulo,
+                'canal': canal,
+                'descripcion': descripcion,
+                'miniatura_url': miniatura
+            }
+        )
+        messages.success(request, 'Video guardado correctamente.')
+        return redirect('mi_lista')
+        
+    return redirect('inicio')
+```
+
+### Save Flow
+
+<Steps>
+  <Step title="User clicks save button">
+    From the search results page, the user clicks a "Save" button on a video they want to keep.
+  </Step>
+  
+  <Step title="Form submission">
+    A hidden form containing video metadata (ID, title, channel, description, thumbnail) is submitted via POST request to `/guardar/`.
+  </Step>
+  
+  <Step title="Extract POST data">
+    The view extracts all video information from the POST request.
+  </Step>
+  
+  <Step title="Create or retrieve record">
+    `get_or_create()` attempts to create a new record. If the video already exists for this user (unique constraint), it retrieves the existing record without raising an error.
+  </Step>
+  
+  <Step title="Success feedback">
+    A success message is displayed: "Video guardado correctamente."
+  </Step>
+  
+  <Step title="Redirect to collection">
+    The user is redirected to their saved videos list at `/mi-lista/`.
+  </Step>
+</Steps>
+
+### Using get_or_create()
+
+The `get_or_create()` method is crucial for handling duplicates:
+
+```python
+VideoGuardado.objects.get_or_create(
+    user=request.user,
+    video_id=video_id,
+    defaults={
+        'titulo': titulo,
+        'canal': canal,
+        'descripcion': descripcion,
+        'miniatura_url': miniatura
+    }
+)
+```
+
+- **Lookup fields**: `user` and `video_id` are used to find existing records
+- **Defaults**: If no record exists, create one with the provided defaults
+- **Return value**: Returns a tuple `(object, created)` where `created` is a boolean
+
+<Tip>
+The view doesn't check the `created` boolean because the outcome is the same: the video is in the user's collection. This simplifies the code and user experience.
+</Tip>
+
+## Viewing Saved Videos
+
+The `mi_lista` view (`views.py:170-172`) displays all saved videos for the current user:
+
+```python
+@login_required
+def mi_lista(request):
+    videos = VideoGuardado.objects.filter(user=request.user).order_by('-fecha_guardado')
+    return render(request, 'mi_lista.html', {'videos': videos})
+```
+
+### Query Details
+
+- **Filter by user**: `filter(user=request.user)` ensures users only see their own saved videos
+- **Order by date**: `order_by('-fecha_guardado')` displays newest videos first
+- **QuerySet**: Returns a Django QuerySet that can be iterated in the template
+
+### Template Context
+
+The template receives a `videos` variable containing all matching `VideoGuardado` objects, which can be used to display:
+- Video thumbnails
+- Titles and descriptions
+- Channel names
+- Save timestamps
+- Delete buttons
+
+## Deleting Videos
+
+The `eliminar_video` view (`views.py:175-179`) removes videos from a user's collection:
+
+```python
+@login_required
+def eliminar_video(request, video_id):
+    video = get_object_or_404(VideoGuardado, id=video_id, user=request.user)
+    video.delete()
+    messages.warning(request, 'Video eliminado de tu lista.')
+    return redirect('mi_lista')
+```
+
+### Delete Flow
+
+<Steps>
+  <Step title="User clicks delete button">
+    From their saved videos list, the user clicks a delete button next to a video.
+  </Step>
+  
+  <Step title="Request with video ID">
+    A GET or POST request is sent to `/eliminar/<video_id>/` where `video_id` is the database primary key (not the YouTube video ID).
+  </Step>
+  
+  <Step title="Security check">
+    `get_object_or_404(VideoGuardado, id=video_id, user=request.user)` ensures:
+    - The video exists
+    - The video belongs to the current user
+    - Returns 404 if either condition fails
+  </Step>
+  
+  <Step title="Delete record">
+    The video record is permanently deleted from the database.
+  </Step>
+  
+  <Step title="Warning message">
+    A warning message is displayed: "Video eliminado de tu lista."
+  </Step>
+  
+  <Step title="Return to collection">
+    The user is redirected back to their saved videos list.
+  </Step>
+</Steps>
+
+### Security Considerations
+
+<Warning>
+The `user=request.user` filter in `get_object_or_404()` is critical for security. It prevents users from deleting other users' saved videos by manipulating the URL.
+</Warning>
+
+Example attack prevention:
+- User A cannot delete User B's videos by guessing the video ID
+- If User A tries to access `/eliminar/123/` where video 123 belongs to User B, they receive a 404 error
+- The database constraint ensures data isolation between users
+
+## URL Routes
+
+Video management uses the following routes (urls.py:17-19):
+
+```python
+path('guardar/', views.guardar_video, name='guardar_video'),
+path('mi-lista/', views.mi_lista, name='mi_lista'),
+path('eliminar/<int:video_id>/', views.eliminar_video, name='eliminar_video'),
+```
+
+| Route | Method | View | Purpose |
+|-------|--------|------|----------|
+| `/guardar/` | POST | `guardar_video` | Save video to collection |
+| `/mi-lista/` | GET | `mi_lista` | Display saved videos |
+| `/eliminar/<int:video_id>/` | GET/POST | `eliminar_video` | Remove video from collection |
+
+## Database Cascade Behavior
+
+The `VideoGuardado` model uses `on_delete=models.CASCADE`:
+
+```python
+user = models.ForeignKey(User, on_delete=models.CASCADE)
+```
+
+This means:
+- If a user account is deleted, all their saved videos are automatically removed
+- Maintains referential integrity
+- Prevents orphaned video records
+
+## Frequently Asked Questions
+
+<AccordionGroup>
+  <Accordion title="What happens if I save the same video twice?">
+    The unique constraint prevents duplicates. When you attempt to save a video you've already saved, the system recognizes the existing record and doesn't create a duplicate. You'll still see the success message.
+  </Accordion>
+  
+  <Accordion title="Does deleting a video from my collection affect YouTube?">
+    No. Deleting a video from your saved collection only removes it from your personal library in this application. The video remains on YouTube and is unaffected.
+  </Accordion>
+  
+  <Accordion title="Can other users see my saved videos?">
+    No. Your saved videos are private and only visible to you. The database filters ensure complete isolation between user collections.
+  </Accordion>
+  
+  <Accordion title="Is there a limit to how many videos I can save?">
+    There's no built-in limit in the application. However, database size and hosting resources may impose practical limits.
+  </Accordion>
+  
+  <Accordion title="What if a video is deleted from YouTube?">
+    The saved record in your collection will still exist with the stored metadata (title, description, thumbnail). However, the video will no longer be playable.
+  </Accordion>
+</AccordionGroup>
+
+## Integration with Search
+
+The video management system integrates seamlessly with the search feature:
+
+1. Users search for videos (see [Video Search](/features/video-search))
+2. Each search result displays a "Save" button
+3. Clicking save stores the video in the user's collection
+4. The user can access their collection anytime from `/mi-lista/`
+
+This workflow allows users to build curated collections of videos without leaving the application.

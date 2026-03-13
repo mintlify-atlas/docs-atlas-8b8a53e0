@@ -1,0 +1,296 @@
+---
+title: 'Deployment Overview'
+description: 'Architecture and deployment options for YouTube Manager in production'
+---
+
+## Architecture Overview
+
+YouTube Manager is a Django 6.0-based SaaS platform that requires careful consideration of several components when deploying to production:
+
+- **Web Server**: Handles HTTP requests and serves static files
+- **Application Server**: Runs the Django application (WSGI/ASGI)
+- **Database**: MySQL for persistent data storage
+- **Static Files**: CSS, JavaScript, and images served separately
+- **Media Files**: User-uploaded videos stored temporarily
+- **OAuth Provider**: Google OAuth 2.0 for authentication
+
+### Deployment Architecture
+
+```
+┌─────────────┐
+│   Client    │
+│  (Browser)  │
+└──────┬──────┘
+       │ HTTPS
+       ▼
+┌─────────────┐
+│   nginx     │  ← Web Server (Reverse Proxy)
+│   (Port 80) │     • Serves static files
+└──────┬──────┘     • SSL termination
+       │             • Request routing
+       ▼
+┌─────────────┐
+│  Gunicorn   │  ← Application Server
+│  (Port 8000)│     • WSGI interface
+└──────┬──────┘     • Django application
+       │
+       ▼
+┌─────────────┐
+│   MySQL     │  ← Database
+│  (Port 3306)│     • User data
+└─────────────┘     • Video metadata
+```
+
+## Application Server Options
+
+YouTube Manager includes both WSGI and ASGI configurations. Choose based on your requirements:
+
+<CardGroup cols={2}>
+  <Card title="WSGI (Recommended)" icon="bolt">
+    **File**: `youtube_project/wsgi.py`
+    
+    Traditional synchronous interface. Best for standard Django applications.
+    
+    **Best with**:
+    - Gunicorn
+    - uWSGI
+    - mod_wsgi (Apache)
+  </Card>
+  
+  <Card title="ASGI" icon="rocket">
+    **File**: `youtube_project/asgi.py`
+    
+    Asynchronous interface for WebSockets and async views.
+    
+    **Best with**:
+    - Daphne
+    - Uvicorn
+    - Hypercorn
+  </Card>
+</CardGroup>
+
+<Note>
+For most YouTube Manager deployments, **WSGI with Gunicorn** is recommended as the application doesn't currently use async features.
+</Note>
+
+## Web Server Options
+
+<CardGroup cols={2}>
+  <Card title="nginx (Recommended)" icon="server">
+    High-performance reverse proxy and static file server.
+    
+    **Advantages**:
+    - Excellent static file performance
+    - Low memory footprint
+    - Built-in load balancing
+    - Easy SSL configuration
+  </Card>
+  
+  <Card title="Apache" icon="shield">
+    Traditional web server with mod_wsgi support.
+    
+    **Advantages**:
+    - Direct WSGI integration
+    - Extensive module ecosystem
+    - .htaccess support
+    - Well-documented
+  </Card>
+</CardGroup>
+
+## Static Files Handling
+
+Django separates static files (CSS, JS) from media files (user uploads). Configuration from `settings.py`:
+
+```python settings.py (lines 116-117)
+STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+```
+
+### Collection Process
+
+<Steps>
+  <Step title="Configure STATIC_ROOT">
+    Already configured at `BASE_DIR/staticfiles` in `settings.py:117`
+  </Step>
+  
+  <Step title="Run collectstatic">
+    ```bash
+    python manage.py collectstatic --noinput
+    ```
+    This gathers all static files into the `staticfiles/` directory.
+  </Step>
+  
+  <Step title="Configure web server">
+    Point nginx or Apache to serve files from `/path/to/staticfiles/`
+  </Step>
+</Steps>
+
+<Warning>
+Never serve static files through Django in production. Always use a dedicated web server like nginx to serve the `staticfiles/` directory directly.
+</Warning>
+
+## Media Files Handling
+
+Media files are user-uploaded videos that are temporarily stored before uploading to YouTube.
+
+Configuration from `settings.py`:
+
+```python settings.py (lines 138-139)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+```
+
+### Storage Considerations
+
+<CardGroup cols={2}>
+  <Card title="Local Storage" icon="hard-drive">
+    **Path**: `BASE_DIR/media/`
+    
+    Suitable for single-server deployments. Ensure adequate disk space and cleanup policies.
+  </Card>
+  
+  <Card title="Cloud Storage" icon="cloud">
+    **Options**: AWS S3, Google Cloud Storage
+    
+    Recommended for multi-server deployments and better scalability.
+  </Card>
+</CardGroup>
+
+<Info>
+Videos in the `media/` directory are temporary - they're uploaded to YouTube and can be cleaned up periodically to save disk space.
+</Info>
+
+## Database Configuration
+
+YouTube Manager uses **MySQL** with specific configuration requirements.
+
+### Current Configuration
+
+From `settings.py:66-79`:
+
+```python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': config('DB_NAME'),
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASS'),
+        'HOST': config('DB_HOST'),
+        'PORT': config('DB_PORT'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+}
+```
+
+### Production Considerations
+
+<CardGroup cols={2}>
+  <Card title="Connection Pooling" icon="link">
+    Use `CONN_MAX_AGE` to reuse database connections:
+    
+    ```python
+    'CONN_MAX_AGE': 600  # 10 minutes
+    ```
+  </Card>
+  
+  <Card title="Read Replicas" icon="clone">
+    For high-traffic deployments, configure read replicas using Django's database routing.
+  </Card>
+</CardGroup>
+
+### Required Database Tables
+
+- `auth_user` - Django user authentication
+- `core_videoguardado` - Saved favorite videos
+- `core_videosubido` - User-uploaded videos
+- `django_session` - Session management
+
+## Environment Variables
+
+All sensitive configuration is managed via environment variables using `python-decouple`.
+
+### Required Variables
+
+```bash .env
+# Security
+SECRET_KEY=your-production-secret-key-here
+DEBUG=False
+ALLOWED_HOSTS=yourdomain.com,www.yourdomain.com
+
+# Database
+DB_NAME=youtube_manager_prod
+DB_USER=youtube_user
+DB_PASS=secure-password-here
+DB_HOST=localhost
+DB_PORT=3306
+```
+
+<Warning>
+**Never** commit the `.env` file to version control. It's already excluded in `.gitignore:135`.
+</Warning>
+
+## SSL/TLS Requirements
+
+Google OAuth 2.0 **requires HTTPS** in production for security.
+
+### Development vs Production
+
+In `settings.py:123`, there's a development-only setting:
+
+```python
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+```
+
+<Warning>
+**Remove this line** in production! OAuth must use HTTPS in production environments. Configure SSL certificates using Let's Encrypt or your cloud provider.
+</Warning>
+
+### OAuth Configuration
+
+<Steps>
+  <Step title="Update Google Cloud Console">
+    Add your production domain to authorized redirect URIs:
+    - `https://yourdomain.com/oauth2callback`
+  </Step>
+  
+  <Step title="Update client_secret.json">
+    Ensure redirect URIs match your production domain.
+  </Step>
+  
+  <Step title="Configure SSL certificate">
+    Use Let's Encrypt with certbot or your hosting provider's SSL.
+  </Step>
+</Steps>
+
+## Security Middleware
+
+Django's security middleware is already configured in `settings.py:33-41`:
+
+```python
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+```
+
+Additional production security settings should include:
+
+```python
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+```
+
+## Next Steps
+
+Ready to deploy? Continue to the [Production Deployment Guide](/deployment/production) for step-by-step instructions.

@@ -1,0 +1,572 @@
+---
+title: 'Views'
+description: 'View functions and API endpoints for the YouTube Manager'
+---
+
+The YouTube Manager application is organized into four functional groups: Authentication, Search, Collection Management, and Upload Management.
+
+## Helper Functions
+
+### get_youtube_service()
+
+**Location:** `core/views.py:94-102`
+
+Reconstructs YouTube API service from session credentials.
+
+```python
+def get_youtube_service(request):
+    creds_data = request.session.get('credentials')
+    if not creds_data:
+        return None
+    
+    from google.oauth2.credentials import Credentials
+    creds = Credentials(**creds_data)
+    return build('youtube', 'v3', credentials=creds)
+```
+
+**Parameters:**
+- `request` - Django HttpRequest object with session data
+
+**Returns:**
+- YouTube API service object or `None` if credentials not found
+
+**Usage:**
+This helper is called by views that need to interact with the YouTube Data API. It retrieves OAuth2 credentials stored in the user's session during authentication.
+
+---
+
+## Authentication Views
+
+### login_view()
+
+**Location:** `core/views.py:24-27`
+
+Displays the login page or redirects authenticated users.
+
+```python
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('inicio')
+    return render(request, 'login.html')
+```
+
+**HTTP Methods:** GET
+
+**Parameters:** None
+
+**Returns:**
+- Redirects to `inicio` if already authenticated
+- Renders `login.html` template for unauthenticated users
+
+---
+
+### google_login()
+
+**Location:** `core/views.py:29-44`
+
+Initiates OAuth2 flow with Google.
+
+```python
+def google_login(request):
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        settings.GOOGLE_CLIENT_SECRETS_FILE,
+        scopes=settings.SCOPES
+    )
+    flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+    
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+    
+    request.session['state'] = state
+    return redirect(authorization_url)
+```
+
+**HTTP Methods:** GET
+
+**Flow:**
+1. Creates OAuth2 flow from client secrets file
+2. Sets redirect URI from environment config
+3. Generates authorization URL with offline access
+4. Stores state in session for verification
+5. Redirects user to Google's authorization page
+
+**Session Data:**
+- Stores `state` for CSRF protection
+
+---
+
+### google_callback()
+
+**Location:** `core/views.py:46-86`
+
+Handles OAuth2 callback from Google and logs user in.
+
+```python
+def google_callback(request):
+    state = request.session.get('state')
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        settings.GOOGLE_CLIENT_SECRETS_FILE,
+        scopes=settings.SCOPES,
+        state=state
+    )
+    flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+    flow.fetch_token(authorization_response=request.build_absolute_uri())
+    credentials = flow.credentials
+    
+    # Get user info
+    user_info_service = build('oauth2', 'v2', credentials=credentials)
+    user_info = user_info_service.userinfo().get().execute()
+    
+    email = user_info.get('email')
+    first_name = user_info.get('given_name', '')
+    
+    if email:
+        user, created = User.objects.get_or_create(
+            username=email, 
+            defaults={'email': email, 'first_name': first_name}
+        )
+        login(request, user)
+        
+        request.session['credentials'] = {
+            'token': credentials.token,
+            'refresh_token': credentials.refresh_token,
+            'token_uri': credentials.token_uri,
+            'client_id': credentials.client_id,
+            'client_secret': credentials.client_secret,
+            'scopes': credentials.scopes
+        }
+        return redirect('inicio')
+    
+    return redirect('login')
+```
+
+**HTTP Methods:** GET
+
+**Flow:**
+1. Retrieves state from session
+2. Exchanges authorization code for tokens
+3. Fetches user info from Google OAuth2 API
+4. Creates or retrieves Django user by email
+5. Logs user into Django
+6. Stores credentials in session
+7. Redirects to home page
+
+**Session Data:**
+- Stores complete `credentials` object for API calls
+
+<Note>
+This view automatically registers new users on first login using `get_or_create()`.
+</Note>
+
+---
+
+### logout_view()
+
+**Location:** `core/views.py:88-90`
+
+Logs out the current user.
+
+```python
+def logout_view(request):
+    logout(request)
+    return redirect('login')
+```
+
+**HTTP Methods:** GET
+
+**Returns:** Redirects to login page
+
+---
+
+## Search Views
+
+### buscar_video()
+
+**Location:** `core/views.py:109-141`
+**Decorator:** `@login_required`
+
+Searches YouTube videos using the Data API.
+
+```python
+@login_required
+def buscar_video(request):
+    resultados = []
+    query = request.GET.get('q')
+    
+    if query:
+        youtube = get_youtube_service(request)
+        if youtube:
+            try:
+                request_search = youtube.search().list(
+                    part="snippet",
+                    maxResults=9,
+                    q=query,
+                    type="video",
+                    videoEmbeddable='true'
+                )
+                response = request_search.execute()
+                
+                for item in response['items']:
+                    video = {
+                        'id': item['id']['videoId'],
+                        'titulo': item['snippet']['title'],
+                        'descripcion': item['snippet']['description'],
+                        'thumbnail': item['snippet']['thumbnails']['high']['url'],
+                        'canal': item['snippet']['channelTitle'],
+                    }
+                    resultados.append(video)
+            except Exception as e:
+                messages.error(request, f"Error con la API de YouTube: {e}")
+        else:
+            return redirect('google_login')
+    
+    return render(request, 'buscar.html', {'resultados': resultados, 'query': query})
+```
+
+**HTTP Methods:** GET
+
+**Query Parameters:**
+- `q` - Search query string
+
+**Returns:**
+- Renders `buscar.html` with search results
+- Redirects to `google_login` if credentials missing
+
+**API Call:**
+- Uses YouTube Data API `search().list()`
+- Returns maximum 9 embeddable videos
+- Extracts video ID, title, description, thumbnail, and channel
+
+---
+
+## Collection Management Views
+
+### guardar_video()
+
+**Location:** `core/views.py:144-167`
+**Decorator:** `@login_required`
+
+Saves a video to the user's collection.
+
+```python
+@login_required
+def guardar_video(request):
+    if request.method == 'POST':
+        video_id = request.POST.get('video_id')
+        titulo = request.POST.get('titulo')
+        canal = request.POST.get('canal')
+        descripcion = request.POST.get('descripcion')
+        miniatura = request.POST.get('miniatura')
+        
+        VideoGuardado.objects.get_or_create(
+            user=request.user,
+            video_id=video_id,
+            defaults={
+                'titulo': titulo,
+                'canal': canal,
+                'descripcion': descripcion,
+                'miniatura_url': miniatura
+            }
+        )
+        messages.success(request, 'Video guardado correctamente.')
+        return redirect('mi_lista')
+        
+    return redirect('inicio')
+```
+
+**HTTP Methods:** POST
+
+**POST Parameters:**
+- `video_id` - YouTube video ID
+- `titulo` - Video title
+- `canal` - Channel name
+- `descripcion` - Video description
+- `miniatura` - Thumbnail URL
+
+**Returns:**
+- Redirects to `mi_lista` on success
+- Redirects to `inicio` if not POST
+
+**Behavior:**
+- Uses `get_or_create()` to prevent duplicates
+- Shows success message on save
+
+---
+
+### mi_lista()
+
+**Location:** `core/views.py:170-172`
+**Decorator:** `@login_required`
+
+Displays user's saved videos.
+
+```python
+@login_required
+def mi_lista(request):
+    videos = VideoGuardado.objects.filter(user=request.user).order_by('-fecha_guardado')
+    return render(request, 'mi_lista.html', {'videos': videos})
+```
+
+**HTTP Methods:** GET
+
+**Returns:** Renders `mi_lista.html` with videos ordered by date (newest first)
+
+---
+
+### eliminar_video()
+
+**Location:** `core/views.py:175-179`
+**Decorator:** `@login_required`
+
+Removes a video from user's collection.
+
+```python
+@login_required
+def eliminar_video(request, video_id):
+    video = get_object_or_404(VideoGuardado, id=video_id, user=request.user)
+    video.delete()
+    messages.warning(request, 'Video eliminado de tu lista.')
+    return redirect('mi_lista')
+```
+
+**HTTP Methods:** GET, POST
+
+**URL Parameters:**
+- `video_id` (int) - Database ID of the saved video
+
+**Returns:** Redirects to `mi_lista`
+
+**Security:** Verifies video belongs to current user via `get_object_or_404()`
+
+---
+
+## Upload Management Views
+
+### subir_video_youtube()
+
+**Location:** `core/views.py:182-259`
+**Decorator:** `@login_required`
+
+Uploads a video file to YouTube.
+
+```python
+@login_required
+def subir_video_youtube(request):
+    if request.method == 'POST':
+        form = VideoUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            video_file = request.FILES['archivo_video']
+            
+            # Save file temporarily
+            fs = FileSystemStorage()
+            filename = fs.save(video_file.name, video_file)
+            filepath = fs.path(filename)
+            
+            media = None
+            try:
+                youtube = get_youtube_service(request)
+                if not youtube:
+                    return redirect('google_login')
+
+                # Configure metadata
+                body = {
+                    'snippet': {
+                        'title': form.cleaned_data['titulo'],
+                        'description': form.cleaned_data['descripcion'],
+                        'tags': ['TubeManager', 'Django'],
+                        'categoryId': '22'
+                    },
+                    'status': {
+                        'privacyStatus': form.cleaned_data['estado']
+                    }
+                }
+
+                # Prepare upload
+                media = MediaFileUpload(filepath, chunksize=-1, resumable=True)
+                request_upload = youtube.videos().insert(
+                    part=','.join(body.keys()),
+                    body=body,
+                    media_body=media
+                )
+                response = request_upload.execute()
+                
+                # Save reference in DB
+                VideoSubido.objects.create(
+                    user=request.user,
+                    video_id=response['id'],
+                    titulo=form.cleaned_data['titulo'],
+                    descripcion=form.cleaned_data['descripcion'],
+                    estado=form.cleaned_data['estado']
+                )
+                
+                messages.success(request, f"Video subido con éxito! ID: {response['id']}")
+                return redirect('mis_subidos')
+
+            except Exception as e:
+                messages.error(request, f"Error al subir: {e}")
+            finally:
+                # Close media stream and cleanup temp file
+                if media and hasattr(media, 'stream'):
+                    try:
+                        media.stream().close()
+                    except Exception:
+                        pass
+                
+                if os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except PermissionError:
+                        print(f"Warning: Could not delete temp file {filepath}")
+    else:
+        form = VideoUploadForm()
+
+    return render(request, 'subir_video.html', {'form': form})
+```
+
+**HTTP Methods:** GET, POST
+
+**POST Parameters:**
+- `archivo_video` (file) - Video file upload
+- Form fields: `titulo`, `descripcion`, `estado`
+
+**Returns:**
+- Redirects to `mis_subidos` on success
+- Redirects to `google_login` if credentials missing
+- Renders `subir_video.html` with form
+
+**Process Flow:**
+1. Validates form and file upload
+2. Saves file temporarily to disk
+3. Uploads to YouTube with metadata
+4. Saves video reference in database
+5. Cleans up temporary file
+
+<Note>
+Category ID '22' corresponds to "People & Blogs" on YouTube. The cleanup in the `finally` block handles Windows file locking issues.
+</Note>
+
+---
+
+### mis_subidos()
+
+**Location:** `core/views.py:262-264`
+**Decorator:** `@login_required`
+
+Displays user's uploaded videos.
+
+```python
+@login_required
+def mis_subidos(request):
+    videos = VideoSubido.objects.filter(user=request.user).order_by('-fecha_subida')
+    return render(request, 'mis_subidos.html', {'videos': videos})
+```
+
+**HTTP Methods:** GET
+
+**Returns:** Renders `mis_subidos.html` with videos ordered by upload date (newest first)
+
+---
+
+### cambiar_estado_video()
+
+**Location:** `core/views.py:267-293`
+**Decorator:** `@login_required`
+
+Changes video privacy status on YouTube and in database.
+
+```python
+@login_required
+def cambiar_estado_video(request, db_id):
+    video_local = get_object_or_404(VideoSubido, id=db_id, user=request.user)
+    
+    if request.method == 'POST':
+        nuevo_estado = request.POST.get('nuevo_estado')
+        
+        youtube = get_youtube_service(request)
+        try:
+            # Update on YouTube
+            youtube.videos().update(
+                part='status',
+                body={
+                    'id': video_local.video_id,
+                    'status': {'privacyStatus': nuevo_estado}
+                }
+            ).execute()
+            
+            # Update in Django
+            video_local.estado = nuevo_estado
+            video_local.save()
+            messages.success(request, "Privacidad actualizada correctamente.")
+            
+        except Exception as e:
+            messages.error(request, f"Error actualizando en YouTube: {e}")
+            
+    return redirect('mis_subidos')
+```
+
+**HTTP Methods:** POST
+
+**URL Parameters:**
+- `db_id` (int) - Database ID of the uploaded video
+
+**POST Parameters:**
+- `nuevo_estado` - New privacy status (private/public/unlisted)
+
+**Returns:** Redirects to `mis_subidos`
+
+**Process:**
+1. Updates privacy on YouTube via API
+2. Updates local database record
+3. Shows success/error message
+
+**Security:** Verifies video belongs to current user
+
+---
+
+### borrar_video_subido()
+
+**Location:** `core/views.py:296-313`
+**Decorator:** `@login_required`
+
+Deletes video from YouTube and database.
+
+```python
+@login_required
+def borrar_video_subido(request, db_id):
+    video_local = get_object_or_404(VideoSubido, id=db_id, user=request.user)
+    
+    youtube = get_youtube_service(request)
+    try:
+        # Delete from YouTube
+        youtube.videos().delete(id=video_local.video_id).execute()
+        
+        # Delete from Django
+        video_local.delete()
+        messages.success(request, "Video eliminado de YouTube y de tu registro.")
+        
+    except Exception as e:
+        messages.error(request, f"No se pudo borrar de YouTube (quizás ya no existe), pero se eliminará localmente. Error: {e}")
+        video_local.delete()
+        
+    return redirect('mis_subidos')
+```
+
+**HTTP Methods:** GET, POST
+
+**URL Parameters:**
+- `db_id` (int) - Database ID of the uploaded video
+
+**Returns:** Redirects to `mis_subidos`
+
+**Behavior:**
+- Attempts to delete from YouTube first
+- Always deletes from database, even if YouTube deletion fails
+- Gracefully handles case where video already deleted from YouTube
+
+**Security:** Verifies video belongs to current user
+
+<Tip>
+All views that interact with YouTube API check for credentials and redirect to `google_login` if missing, ensuring users maintain valid authentication.
+</Tip>

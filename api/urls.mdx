@@ -1,0 +1,345 @@
+---
+title: 'URL Patterns'
+description: 'URL routing configuration for the YouTube Manager application'
+---
+
+The URL configuration defines all routes in the YouTube Manager application, organized by functional area.
+
+**Location:** `youtube_project/urls.py`
+
+## URL Structure
+
+All URLs are defined in the main `urlpatterns` list and route to views in the `core` application.
+
+```python
+from django.contrib import admin
+from django.urls import path
+from core import views
+
+urlpatterns = [
+    # Admin, Auth, App, and Upload routes
+]
+```
+
+---
+
+## Admin Routes
+
+| URL Pattern | View | Name | Description |
+|-------------|------|------|-------------|
+| `admin/` | `admin.site.urls` | (default) | Django admin interface |
+
+### Usage
+
+```python
+path('admin/', admin.site.urls),  # Line 6
+```
+
+Provides access to Django's built-in administration interface for managing models, users, and application data.
+
+---
+
+## Authentication Routes
+
+| URL Pattern | View Function | Name | Methods | Description |
+|-------------|---------------|------|---------|-------------|
+| `login/` | `views.login_view` | `login` | GET | Display login page |
+| `logout/` | `views.logout_view` | `logout` | GET | Log out current user |
+| `oauth/login/` | `views.google_login` | `google_login` | GET | Initiate Google OAuth flow |
+| `oauth/callback/` | `views.google_callback` | `google_callback` | GET | Handle OAuth callback |
+
+### URL Definitions
+
+```python
+# Auth (Lines 9-12)
+path('login/', views.login_view, name='login'),
+path('logout/', views.logout_view, name='logout'),
+path('oauth/login/', views.google_login, name='google_login'),
+path('oauth/callback/', views.google_callback, name='google_callback'),
+```
+
+### Authentication Flow
+
+1. User visits `/login/` and clicks "Sign in with Google"
+2. Application redirects to `/oauth/login/`
+3. Google redirects back to `/oauth/callback/` with authorization code
+4. User is logged in and redirected to home page
+5. User can log out via `/logout/`
+
+### Reverse URL Examples
+
+```python
+# In views
+from django.urls import reverse
+redirect(reverse('login'))  # /login/
+redirect(reverse('google_login'))  # /oauth/login/
+
+# In templates
+<a href="{% url 'login' %}">Login</a>
+<a href="{% url 'logout' %}">Logout</a>
+```
+
+---
+
+## Application Routes
+
+| URL Pattern | View Function | Name | Methods | Parameters | Description |
+|-------------|---------------|------|---------|------------|-------------|
+| `` (empty) | `views.inicio` | `inicio` | GET | - | Home page |
+| `buscar/` | `views.buscar_video` | `buscar` | GET | `?q=query` | Search YouTube videos |
+| `guardar/` | `views.guardar_video` | `guardar_video` | POST | - | Save video to collection |
+| `mi-lista/` | `views.mi_lista` | `mi_lista` | GET | - | View saved videos |
+| `eliminar/<int:video_id>/` | `views.eliminar_video` | `eliminar_video` | GET, POST | `video_id` | Remove saved video |
+
+### URL Definitions
+
+```python
+# App (Lines 15-19)
+path('', views.inicio, name='inicio'),
+path('buscar/', views.buscar_video, name='buscar'),
+path('guardar/', views.guardar_video, name='guardar_video'),
+path('mi-lista/', views.mi_lista, name='mi_lista'),
+path('eliminar/<int:video_id>/', views.eliminar_video, name='eliminar_video'),
+```
+
+### Route Details
+
+#### Home Page
+```python
+path('', views.inicio, name='inicio')  # /
+```
+- Root URL of the application
+- Requires login
+- Displays welcome page with navigation
+
+#### Search Videos
+```python
+path('buscar/', views.buscar_video, name='buscar')  # /buscar/?q=django
+```
+- Query parameter: `q` (search query)
+- Returns up to 9 embeddable videos
+- Requires valid YouTube API credentials
+
+#### Save Video
+```python
+path('guardar/', views.guardar_video, name='guardar_video')  # POST /guardar/
+```
+- POST only endpoint
+- Accepts form data: `video_id`, `titulo`, `canal`, `descripcion`, `miniatura`
+- Prevents duplicate saves with unique constraint
+
+#### View Collection
+```python
+path('mi-lista/', views.mi_lista, name='mi_lista')  # /mi-lista/
+```
+- Displays all saved videos for current user
+- Ordered by save date (newest first)
+
+#### Delete Saved Video
+```python
+path('eliminar/<int:video_id>/', views.eliminar_video, name='eliminar_video')  # /eliminar/5/
+```
+- URL parameter: `video_id` (database ID, not YouTube ID)
+- Verifies ownership before deletion
+
+### Reverse URL Examples
+
+```python
+# In views
+redirect('inicio')  # /
+redirect('buscar')  # /buscar/
+redirect('mi_lista')  # /mi-lista/
+redirect('eliminar_video', video_id=5)  # /eliminar/5/
+
+# In templates
+<a href="{% url 'inicio' %}">Home</a>
+<a href="{% url 'buscar' %}?q=django">Search</a>
+<a href="{% url 'mi_lista' %}">My List</a>
+<a href="{% url 'eliminar_video' video.id %}">Delete</a>
+```
+
+---
+
+## Upload Management Routes
+
+| URL Pattern | View Function | Name | Methods | Parameters | Description |
+|-------------|---------------|------|---------|------------|-------------|
+| `subir/` | `views.subir_video_youtube` | `subir_video` | GET, POST | - | Upload video to YouTube |
+| `mis-videos/` | `views.mis_subidos` | `mis_subidos` | GET | - | View uploaded videos |
+| `mis-videos/actualizar/<int:db_id>/` | `views.cambiar_estado_video` | `actualizar_estado` | POST | `db_id` | Update video privacy |
+| `mis-videos/borrar/<int:db_id>/` | `views.borrar_video_subido` | `borrar_subido` | GET, POST | `db_id` | Delete uploaded video |
+
+### URL Definitions
+
+```python
+# Upload Management (Lines 21-24)
+path('subir/', views.subir_video_youtube, name='subir_video'),
+path('mis-videos/', views.mis_subidos, name='mis_subidos'),
+path('mis-videos/actualizar/<int:db_id>/', views.cambiar_estado_video, name='actualizar_estado'),
+path('mis-videos/borrar/<int:db_id>/', views.borrar_video_subido, name='borrar_subido'),
+```
+
+### Route Details
+
+#### Upload Video
+```python
+path('subir/', views.subir_video_youtube, name='subir_video')  # /subir/
+```
+- GET: Display upload form
+- POST: Process video upload to YouTube
+- Accepts multipart/form-data with video file
+- Requires YouTube API credentials
+
+#### View Uploaded Videos
+```python
+path('mis-videos/', views.mis_subidos, name='mis_subidos')  # /mis-videos/
+```
+- Lists all videos uploaded by current user
+- Ordered by upload date (newest first)
+- Shows video ID, title, and privacy status
+
+#### Update Video Privacy
+```python
+path('mis-videos/actualizar/<int:db_id>/', views.cambiar_estado_video, name='actualizar_estado')  # /mis-videos/actualizar/3/
+```
+- POST only endpoint
+- URL parameter: `db_id` (database record ID)
+- POST parameter: `nuevo_estado` (private/public/unlisted)
+- Updates both YouTube and local database
+
+#### Delete Uploaded Video
+```python
+path('mis-videos/borrar/<int:db_id>/', views.borrar_video_subido, name='borrar_subido')  # /mis-videos/borrar/3/
+```
+- URL parameter: `db_id` (database record ID)
+- Deletes from both YouTube and local database
+- Gracefully handles videos already deleted from YouTube
+
+### Reverse URL Examples
+
+```python
+# In views
+redirect('subir_video')  # /subir/
+redirect('mis_subidos')  # /mis-videos/
+redirect('actualizar_estado', db_id=3)  # /mis-videos/actualizar/3/
+redirect('borrar_subido', db_id=3)  # /mis-videos/borrar/3/
+
+# In templates
+<a href="{% url 'subir_video' %}">Upload Video</a>
+<a href="{% url 'mis_subidos' %}">My Uploads</a>
+
+<form method="post" action="{% url 'actualizar_estado' video.id %}">
+    <!-- Update form -->
+</form>
+
+<a href="{% url 'borrar_subido' video.id %}" onclick="return confirm('Delete?')">Delete</a>
+```
+
+---
+
+## URL Parameter Types
+
+The application uses typed URL parameters for data validation:
+
+### Integer Parameters
+
+```python
+<int:video_id>  # Database ID for saved videos (VideoGuardado.id)
+<int:db_id>     # Database ID for uploaded videos (VideoSubido.id)
+```
+
+- Automatically converted to Python integers
+- Returns 404 if non-integer provided
+- Used in path converters like `<int:name>`
+
+### Query Parameters
+
+Query strings are accessed via `request.GET`:
+
+```python
+# URL: /buscar/?q=django+tutorial
+query = request.GET.get('q')  # 'django tutorial'
+```
+
+---
+
+## Complete URL Configuration
+
+```python
+from django.contrib import admin
+from django.urls import path
+from core import views
+
+urlpatterns = [
+    # Admin
+    path('admin/', admin.site.urls),
+    
+    # Authentication
+    path('login/', views.login_view, name='login'),
+    path('logout/', views.logout_view, name='logout'),
+    path('oauth/login/', views.google_login, name='google_login'),
+    path('oauth/callback/', views.google_callback, name='google_callback'),
+    
+    # Application
+    path('', views.inicio, name='inicio'),
+    path('buscar/', views.buscar_video, name='buscar'),
+    path('guardar/', views.guardar_video, name='guardar_video'),
+    path('mi-lista/', views.mi_lista, name='mi_lista'),
+    path('eliminar/<int:video_id>/', views.eliminar_video, name='eliminar_video'),
+    
+    # Upload Management
+    path('subir/', views.subir_video_youtube, name='subir_video'),
+    path('mis-videos/', views.mis_subidos, name='mis_subidos'),
+    path('mis-videos/actualizar/<int:db_id>/', views.cambiar_estado_video, name='actualizar_estado'),
+    path('mis-videos/borrar/<int:db_id>/', views.borrar_video_subido, name='borrar_subido'),
+]
+```
+
+---
+
+## URL Naming Conventions
+
+| Pattern | Purpose | Examples |
+|---------|---------|----------|
+| Noun | View/list pages | `inicio`, `login`, `buscar` |
+| Verb + Noun | Action endpoints | `guardar_video`, `subir_video` |
+| Possessive | User-specific lists | `mi_lista`, `mis_subidos` |
+| Verb + Object | Destructive actions | `eliminar_video`, `borrar_subido` |
+| Verb + Estado | State changes | `actualizar_estado`, `cambiar_estado_video` |
+
+<Note>
+All application routes (except admin and OAuth) require authentication via the `@login_required` decorator on their view functions.
+</Note>
+
+<Tip>
+When building links in templates, always use `{% url 'name' %}` instead of hardcoded paths. This ensures URLs remain correct even if patterns change.
+</Tip>
+
+## URL Testing
+
+### Manual Testing
+
+```bash
+# Start development server
+python manage.py runserver
+
+# Test routes
+curl http://localhost:8000/
+curl http://localhost:8000/buscar/?q=django
+curl http://localhost:8000/mi-lista/
+```
+
+### Reverse Resolution Testing
+
+```python
+from django.urls import reverse
+from django.test import TestCase
+
+class URLTests(TestCase):
+    def test_url_reversal(self):
+        self.assertEqual(reverse('inicio'), '/')
+        self.assertEqual(reverse('buscar'), '/buscar/')
+        self.assertEqual(reverse('mi_lista'), '/mi-lista/')
+        self.assertEqual(reverse('eliminar_video', args=[5]), '/eliminar/5/')
+        self.assertEqual(reverse('actualizar_estado', kwargs={'db_id': 3}), '/mis-videos/actualizar/3/')
+```

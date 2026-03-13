@@ -1,0 +1,160 @@
+---
+title: 'Models'
+description: 'Database models for the YouTube Manager application'
+---
+
+The YouTube Manager uses two primary Django models to manage user data: `VideoGuardado` for saved videos and `VideoSubido` for uploaded videos.
+
+## VideoGuardado
+
+Stores videos that users have saved to their collection (favorites).
+
+**Location:** `core/models.py:5-18`
+
+### Fields
+
+| Field | Type | Description | Constraints |
+|-------|------|-------------|-------------|
+| `user` | ForeignKey | Reference to Django User model | `on_delete=CASCADE` |
+| `video_id` | CharField | YouTube video ID | `max_length=50` |
+| `titulo` | CharField | Video title | `max_length=255` |
+| `canal` | CharField | Channel name | `max_length=255` |
+| `descripcion` | TextField | Video description | None |
+| `miniatura_url` | URLField | Thumbnail image URL | None |
+| `fecha_guardado` | DateTimeField | Timestamp when saved | `auto_now_add=True` |
+
+### Model Definition
+
+```python
+class VideoGuardado(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    video_id = models.CharField(max_length=50)
+    titulo = models.CharField(max_length=255)
+    canal = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    miniatura_url = models.URLField()
+    fecha_guardado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'video_id')
+
+    def __str__(self):
+        return self.titulo
+```
+
+### Meta Configuration
+
+- **unique_together**: `('user', 'video_id')` - Prevents duplicate saves of the same video by a user
+
+### Relationships
+
+- **User (ForeignKey)**: Each saved video belongs to one user. When a user is deleted, all their saved videos are deleted (`CASCADE`).
+
+### String Representation
+
+Returns the video title (`self.titulo`).
+
+---
+
+## VideoSubido
+
+Represents videos uploaded by users through the CMS to YouTube.
+
+**Location:** `core/models.py:21-36`
+
+### Fields
+
+| Field | Type | Description | Constraints |
+|-------|------|-------------|-------------|
+| `user` | ForeignKey | Reference to Django User model | `on_delete=CASCADE` |
+| `video_id` | CharField | YouTube video ID | `max_length=50`, `unique=True` |
+| `titulo` | CharField | Video title | `max_length=255` |
+| `descripcion` | TextField | Video description | None |
+| `estado` | CharField | Privacy status | `max_length=20`, choices from `ESTADOS` |
+| `fecha_subida` | DateTimeField | Timestamp when uploaded | `auto_now_add=True` |
+
+### Model Definition
+
+```python
+class VideoSubido(models.Model):
+    ESTADOS = [
+        ('private', 'Privado'),
+        ('public', 'Público'),
+        ('unlisted', 'No listado'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    video_id = models.CharField(max_length=50, unique=True)
+    titulo = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='private')
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.titulo} ({self.estado})"
+```
+
+### Estado Choices
+
+The `estado` field uses predefined choices:
+
+| Value | Display |
+|-------|--------|
+| `private` | Privado (default) |
+| `public` | Público |
+| `unlisted` | No listado |
+
+### Meta Configuration
+
+- **unique constraint**: `video_id` is unique across all records, preventing duplicate entries for the same YouTube video
+
+### Relationships
+
+- **User (ForeignKey)**: Each uploaded video belongs to one user. When a user is deleted, all their uploaded videos are deleted (`CASCADE`).
+
+### String Representation
+
+Returns the title with privacy status: `"{titulo} ({estado})"`
+
+<Note>
+Both models use `auto_now_add=True` for timestamp fields, automatically recording when records are created. These timestamps cannot be modified after creation.
+</Note>
+
+## Usage Examples
+
+### Creating a VideoGuardado
+
+```python
+VideoGuardado.objects.get_or_create(
+    user=request.user,
+    video_id='dQw4w9WgXcQ',
+    defaults={
+        'titulo': 'Example Video',
+        'canal': 'Example Channel',
+        'descripcion': 'Video description',
+        'miniatura_url': 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'
+    }
+)
+```
+
+### Creating a VideoSubido
+
+```python
+VideoSubido.objects.create(
+    user=request.user,
+    video_id=response['id'],
+    titulo='My Upload',
+    descripcion='Uploaded via CMS',
+    estado='private'
+)
+```
+
+### Querying User's Videos
+
+```python
+# Get all saved videos for a user
+saved_videos = VideoGuardado.objects.filter(user=request.user).order_by('-fecha_guardado')
+
+# Get all uploaded videos for a user
+uploaded_videos = VideoSubido.objects.filter(user=request.user).order_by('-fecha_subida')
+```

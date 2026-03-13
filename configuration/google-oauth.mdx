@@ -1,0 +1,392 @@
+---
+title: 'Google OAuth Setup'
+description: 'Configure Google OAuth 2.0 and YouTube Data API v3 for authentication and video management'
+---
+
+## Overview
+
+YouTube Manager uses Google OAuth 2.0 to authenticate users and access the YouTube Data API v3. This guide walks you through creating OAuth credentials and configuring them in your application.
+
+<Info>
+  OAuth configuration is required for all YouTube API operations including video search, upload, and management.
+</Info>
+
+## Prerequisites
+
+- Google account
+- Access to [Google Cloud Console](https://console.cloud.google.com)
+- YouTube Manager project installed and environment variables configured
+
+## Setup Process
+
+<Steps>
+  <Step title="Create a Google Cloud Project">
+    
+    1. Go to [Google Cloud Console](https://console.cloud.google.com)
+    2. Click on the project dropdown in the top navigation bar
+    3. Click **"New Project"**
+    4. Enter a project name (e.g., "YouTube Manager")
+    5. Click **"Create"**
+    6. Wait for the project to be created (takes a few seconds)
+    7. Select your newly created project from the dropdown
+    
+    <Note>
+      You can also use an existing Google Cloud project if you prefer.
+    </Note>
+    
+  </Step>
+  
+  <Step title="Enable YouTube Data API v3">
+    
+    1. In the Google Cloud Console, open the navigation menu (☰)
+    2. Navigate to **"APIs & Services" > "Library"**
+    3. Search for **"YouTube Data API v3"**
+    4. Click on **"YouTube Data API v3"** in the search results
+    5. Click the **"Enable"** button
+    6. Wait for the API to be enabled
+    
+    <Info>
+      The YouTube Data API v3 is required for all YouTube operations in the application (search, upload, update, delete).
+    </Info>
+    
+  </Step>
+  
+  <Step title="Configure OAuth Consent Screen">
+    
+    1. Navigate to **"APIs & Services" > "OAuth consent screen"**
+    2. Select **"External"** user type (unless you have Google Workspace)
+    3. Click **"Create"**
+    
+    **App Information:**
+    - **App name**: YouTube Manager (or your preferred name)
+    - **User support email**: Your email address
+    - **Developer contact email**: Your email address
+    
+    4. Click **"Save and Continue"**
+    
+    **Scopes:**
+    5. Click **"Add or Remove Scopes"**
+    6. Add the following scopes manually or search for them:
+       - `https://www.googleapis.com/auth/youtube`
+       - `https://www.googleapis.com/auth/youtube.upload`
+       - `https://www.googleapis.com/auth/userinfo.email`
+       - `https://www.googleapis.com/auth/userinfo.profile`
+       - `openid`
+    
+    <Warning>
+      These exact scopes are required by the application (settings.py:129-135). Missing scopes will cause authentication failures.
+    </Warning>
+    
+    7. Click **"Update"** and then **"Save and Continue"**
+    
+    **Test Users (Development):**
+    8. Add your email address as a test user
+    9. Click **"Save and Continue"**
+    10. Review and click **"Back to Dashboard"**
+    
+  </Step>
+  
+  <Step title="Create OAuth 2.0 Credentials">
+    
+    1. Navigate to **"APIs & Services" > "Credentials"**
+    2. Click **"+ Create Credentials"** at the top
+    3. Select **"OAuth client ID"**
+    
+    **Application type:**
+    4. Select **"Web application"**
+    
+    **Name:**
+    5. Enter a name: "YouTube Manager Web Client"
+    
+    **Authorized JavaScript origins:**
+    6. Click **"+ Add URI"**
+    
+    For development:
+    ```
+    http://localhost:8000
+    ```
+    
+    For production:
+    ```
+    https://yourdomain.com
+    ```
+    
+    **Authorized redirect URIs:**
+    7. Click **"+ Add URI"**
+    
+    For development:
+    ```
+    http://localhost:8000/oauth/callback/
+    ```
+    
+    For production:
+    ```
+    https://yourdomain.com/oauth/callback/
+    ```
+    
+    <Warning>
+      The redirect URI must match EXACTLY with the `GOOGLE_CALLBACK_URL` in your `.env` file (views.py:35, 53).
+    </Warning>
+    
+    8. Click **"Create"**
+    
+  </Step>
+  
+  <Step title="Download Client Secret File">
+    
+    1. A dialog appears showing your client ID and client secret
+    2. Click **"Download JSON"**
+    3. Rename the downloaded file to `client_secret.json`
+    4. Move it to your project root directory (same level as `manage.py`)
+    
+    <Note>
+      The application looks for this file at `BASE_DIR/client_secret.json` (settings.py:127).
+    </Note>
+    
+    **File location:**
+    ```
+    youtube_project/
+    ├── manage.py
+    ├── client_secret.json  ← Place file here
+    ├── .env
+    └── ...
+    ```
+    
+    <Warning>
+      Never commit `client_secret.json` to version control! Add it to `.gitignore`.
+    </Warning>
+    
+  </Step>
+</Steps>
+
+## Required OAuth Scopes
+
+The application requires these specific scopes (settings.py:129-135):
+
+```python settings.py
+SCOPES = [
+    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.upload',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid'
+]
+```
+
+### Scope Descriptions
+
+| Scope | Purpose | Usage |
+|-------|---------|-------|
+| `youtube` | Manage YouTube account | Search videos, view channel info |
+| `youtube.upload` | Upload and manage videos | Upload videos, update metadata, delete videos |
+| `userinfo.email` | Access user email | User identification and login |
+| `userinfo.profile` | Access user profile | Display user name |
+| `openid` | OpenID Connect | Standard OAuth authentication |
+
+## Development vs Production Configuration
+
+### Development Settings
+
+For local development, the application enables special OAuth settings (settings.py:123-125):
+
+```python settings.py
+# Allow HTTP in local development
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+# Relax scope matching
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+```
+
+<Warning>
+  `OAUTHLIB_INSECURE_TRANSPORT` allows OAuth over HTTP for development only. **Never use this in production!**
+</Warning>
+
+**Development checklist:**
+- ✅ HTTP URLs allowed (`http://localhost:8000`)
+- ✅ Relaxed token scope validation
+- ✅ Test user access only
+- ✅ Use `http://` in `GOOGLE_CALLBACK_URL`
+
+### Production Settings
+
+**Production requirements:**
+- ✅ HTTPS required for all URLs
+- ✅ Valid SSL certificate
+- ✅ Verified domain in Google Cloud Console
+- ✅ Published OAuth consent screen (or restricted to organization)
+- ✅ Use `https://` in `GOOGLE_CALLBACK_URL`
+- ❌ Remove or disable `OAUTHLIB_INSECURE_TRANSPORT`
+
+<CodeGroup>
+
+```bash Development .env
+GOOGLE_CALLBACK_URL=http://localhost:8000/oauth/callback/
+```
+
+```bash Production .env
+GOOGLE_CALLBACK_URL=https://yourdomain.com/oauth/callback/
+```
+
+</CodeGroup>
+
+## OAuth Flow Implementation
+
+The application implements OAuth 2.0 using `google-auth-oauthlib` (requirements.txt:11):
+
+### 1. Initiate Login (views.py:29-44)
+
+```python
+def google_login(request):
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        settings.GOOGLE_CLIENT_SECRETS_FILE,
+        scopes=settings.SCOPES
+    )
+    flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+    
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+    
+    request.session['state'] = state
+    return redirect(authorization_url)
+```
+
+### 2. Handle Callback (views.py:46-86)
+
+- Exchanges authorization code for access token
+- Retrieves user info from Google
+- Creates or logs in Django user
+- Stores credentials in session for API calls
+
+### 3. API Calls (views.py:94-102)
+
+```python
+def get_youtube_service(request):
+    creds_data = request.session.get('credentials')
+    if not creds_data:
+        return None
+    
+    from google.oauth2.credentials import Credentials
+    creds = Credentials(**creds_data)
+    return build('youtube', 'v3', credentials=creds)
+```
+
+## Testing OAuth Setup
+
+<Steps>
+  <Step title="Start Development Server">
+    
+    ```bash
+    python manage.py runserver
+    ```
+    
+  </Step>
+  
+  <Step title="Navigate to Login Page">
+    
+    Open your browser and go to:
+    ```
+    http://localhost:8000/login/
+    ```
+    
+  </Step>
+  
+  <Step title="Click Login with Google">
+    
+    - You'll be redirected to Google's OAuth consent screen
+    - Sign in with your Google account (must be added as test user)
+    - Review requested permissions
+    - Click **"Continue"** or **"Allow"**
+    
+  </Step>
+  
+  <Step title="Verify Success">
+    
+    - You should be redirected back to your application
+    - Check that you're logged in and can access protected pages
+    - Session should contain OAuth credentials
+    
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Error: redirect_uri_mismatch
+
+**Cause**: The redirect URI in your `.env` doesn't match Google Cloud Console configuration.
+
+**Solution**:
+1. Check `GOOGLE_CALLBACK_URL` in `.env`
+2. Verify it matches exactly in Google Cloud Console > Credentials
+3. Ensure trailing slash is consistent
+4. Restart Django server after changes
+
+### Error: access_denied
+
+**Cause**: User not added as test user during development.
+
+**Solution**: Add your Google account as a test user in OAuth consent screen settings.
+
+### Error: invalid_scope
+
+**Cause**: Requested scopes don't match configured scopes.
+
+**Solution**: Verify all 5 required scopes are added to OAuth consent screen configuration.
+
+### Error: invalid_client
+
+**Cause**: `client_secret.json` is missing or invalid.
+
+**Solution**:
+1. Verify file exists in project root
+2. Check file is valid JSON
+3. Re-download from Google Cloud Console if corrupted
+4. Verify path in settings.py:127
+
+### Error: InsecureTransportError
+
+**Cause**: Using HTTP in production or `OAUTHLIB_INSECURE_TRANSPORT` not set in development.
+
+**Solution**:
+- Development: Ensure settings.py:123 sets the environment variable
+- Production: Use HTTPS with valid SSL certificate
+
+## Security Best Practices
+
+<Warning>
+  **OAuth Security Requirements:**
+  
+  - Never commit `client_secret.json` to git
+  - Use HTTPS in production
+  - Keep client secret confidential
+  - Regularly rotate credentials
+  - Monitor OAuth consent screen for suspicious activity
+</Warning>
+
+### Add to .gitignore
+
+```bash .gitignore
+client_secret.json
+.env
+*.pyc
+__pycache__/
+```
+
+### Production Deployment
+
+1. **Use environment variables** instead of `client_secret.json` when possible
+2. **Enable additional security features** in Google Cloud Console
+3. **Publish OAuth consent screen** or restrict to your organization
+4. **Monitor API quotas** and set up alerts
+5. **Implement token refresh logic** for long-lived sessions
+
+## Next Steps
+
+<Card title="Environment Variables" icon="gear" href="/configuration/environment">
+  Configure all required environment variables
+</Card>
+
+<Card title="Database Setup" icon="database" href="/configuration/database">
+  Set up MySQL database for the application
+</Card>

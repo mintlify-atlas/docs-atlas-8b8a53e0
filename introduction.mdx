@@ -1,0 +1,100 @@
+---
+title: Introduction
+description: A powerful Django-based SaaS platform for YouTube content creators to search, save, and manage their video content.
+---
+
+## What is YouTube Manager?
+
+YouTube Manager is a comprehensive Django-based SaaS platform designed to simplify video content management for YouTube creators. It provides an intuitive interface to search YouTube videos, organize your content collections, and upload videos directly to your channel - all through a single, unified platform.
+
+## Why YouTube Manager?
+
+Managing YouTube content can be overwhelming, especially for creators juggling multiple videos, channels, and content ideas. YouTube Manager solves key challenges:
+
+- **Centralized Search**: Search YouTube's entire catalog without leaving your workspace
+- **Content Collections**: Save and organize videos for reference, inspiration, or curation
+- **Direct Upload**: Upload videos to your YouTube channel with custom privacy settings
+- **OAuth Integration**: Secure Google authentication with full YouTube API access
+- **Personal Dashboard**: Manage your uploaded videos and modify their privacy status
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Video Search" icon="magnifying-glass">
+    Search YouTube's catalog using the official YouTube Data API. Find videos by keywords with embeddable results and detailed metadata.
+  </Card>
+  
+  <Card title="Save Collections" icon="bookmark">
+    Create your personal video library. Save videos with full metadata including thumbnails, descriptions, and channel information.
+  </Card>
+  
+  <Card title="Direct Upload" icon="upload">
+    Upload videos directly to your YouTube channel with custom titles, descriptions, tags, and privacy settings (private, public, unlisted).
+  </Card>
+  
+  <Card title="Video Management" icon="sliders">
+    Manage your uploaded videos from a centralized dashboard. Change privacy status or delete videos with real-time YouTube API synchronization.
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+YouTube Manager is built with modern, robust technologies:
+
+- **Framework**: Django 6.0.1 - High-level Python web framework
+- **Database**: MySQL with mysqlclient 2.2.7
+- **Authentication**: Google OAuth 2.0 with google-auth-oauthlib 1.2.4
+- **YouTube Integration**: google-api-python-client 2.188.0
+- **Configuration**: python-decouple 3.8 for environment management
+- **Python**: Requires Python 3.x
+
+## Architecture Overview
+
+YouTube Manager follows Django's Model-View-Template (MVT) architecture:
+
+### Data Models
+
+Two core models power the application:
+
+- **VideoGuardado** (Saved Videos): Stores user's saved video collections with metadata
+- **VideoSubido** (Uploaded Videos): Tracks videos uploaded through the platform
+
+### Authentication Flow
+
+1. Google OAuth 2.0 integration for secure user authentication
+2. Credential storage in Django sessions for API access
+3. Automatic user registration on first login
+4. YouTube API access scopes:
+   - `youtube` - Read/write access to YouTube data
+   - `youtube.upload` - Upload videos
+   - `userinfo.email` and `userinfo.profile` - User profile data
+
+### API Integration
+
+The platform leverages YouTube Data API v3 for:
+
+- **Search**: Query YouTube's video catalog with filters
+- **Upload**: Resumable uploads with metadata configuration
+- **Management**: Update video privacy status and delete videos
+
+## Use Cases
+
+**Content Creators**: Upload and manage your video content with privacy controls before publishing.
+
+**Researchers**: Save and organize videos for academic research or content analysis.
+
+**Curators**: Build collections of videos for playlists, courses, or educational content.
+
+**Marketing Teams**: Manage video campaigns across multiple team members with centralized access.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up YouTube Manager on your local machine or server
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started with your first video search and upload
+  </Card>
+</CardGroup>

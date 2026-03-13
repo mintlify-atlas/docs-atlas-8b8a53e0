@@ -1,0 +1,549 @@
+---
+title: 'Database Configuration'
+description: 'Set up and configure MySQL database for YouTube Manager'
+---
+
+## Overview
+
+YouTube Manager uses MySQL as its primary database, configured with `utf8mb4` character set for full Unicode support and strict transaction tables mode for data integrity.
+
+<Info>
+  MySQL 5.7+ or MySQL 8.0+ recommended. The project uses `mysqlclient` 2.2.7 as the database driver (requirements.txt:15).
+</Info>
+
+## Requirements
+
+- MySQL 5.7 or later (MySQL 8.0+ recommended)
+- Python `mysqlclient` package (included in requirements.txt)
+- Database user with appropriate permissions
+
+## Database Engine Configuration
+
+The application uses Django's MySQL backend (settings.py:66-79):
+
+```python settings.py
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': config('DB_NAME'),
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASS'),
+        'HOST': config('DB_HOST'),
+        'PORT': config('DB_PORT'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+}
+```
+
+### Configuration Options
+
+#### Character Set: utf8mb4
+
+<Note>
+  `utf8mb4` is required for full Unicode support including emojis, which are common in YouTube video titles and descriptions.
+</Note>
+
+**Benefits:**
+- Supports all Unicode characters (4-byte UTF-8)
+- Required for storing emojis and special characters
+- YouTube content often contains international characters
+
+#### SQL Mode: STRICT_TRANS_TABLES
+
+<Info>
+  `STRICT_TRANS_TABLES` ensures data integrity by preventing invalid data from being inserted.
+</Info>
+
+**Features:**
+- Enforces data type constraints
+- Prevents truncation of data
+- Raises errors instead of warnings for invalid data
+- Ensures transactional integrity
+
+## Installation Steps
+
+<Steps>
+  <Step title="Install MySQL Server">
+    
+    **Ubuntu/Debian:**
+    ```bash
+    sudo apt update
+    sudo apt install mysql-server
+    sudo systemctl start mysql
+    sudo systemctl enable mysql
+    ```
+    
+    **macOS (Homebrew):**
+    ```bash
+    brew install mysql
+    brew services start mysql
+    ```
+    
+    **Windows:**
+    - Download MySQL installer from [mysql.com](https://dev.mysql.com/downloads/installer/)
+    - Run installer and follow setup wizard
+    - Start MySQL service from Services panel
+    
+  </Step>
+  
+  <Step title="Secure MySQL Installation">
+    
+    Run the security script to set root password and remove insecure defaults:
+    
+    ```bash
+    sudo mysql_secure_installation
+    ```
+    
+    Follow the prompts:
+    - Set root password
+    - Remove anonymous users
+    - Disallow root login remotely
+    - Remove test database
+    - Reload privilege tables
+    
+  </Step>
+  
+  <Step title="Create Database">
+    
+    Log into MySQL as root:
+    
+    ```bash
+    mysql -u root -p
+    ```
+    
+    Create the database with proper character set:
+    
+    ```sql
+    CREATE DATABASE youtube_manager
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+    ```
+    
+    <Note>
+      The database name should match the `DB_NAME` value in your `.env` file.
+    </Note>
+    
+  </Step>
+  
+  <Step title="Create Database User">
+    
+    Create a dedicated user for the application:
+    
+    <CodeGroup>
+    
+    ```sql Development
+    -- Create user for local development
+    CREATE USER 'youtube_user'@'localhost' 
+    IDENTIFIED BY 'your_password_here';
+    
+    -- Grant all privileges on the database
+    GRANT ALL PRIVILEGES ON youtube_manager.* 
+    TO 'youtube_user'@'localhost';
+    
+    FLUSH PRIVILEGES;
+    ```
+    
+    ```sql Production
+    -- Create user with specific host or wildcard
+    CREATE USER 'youtube_app'@'%' 
+    IDENTIFIED BY 'strong_production_password';
+    
+    -- Grant only required privileges
+    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX, ALTER 
+    ON youtube_manager.* 
+    TO 'youtube_app'@'%';
+    
+    FLUSH PRIVILEGES;
+    ```
+    
+    </CodeGroup>
+    
+    <Warning>
+      Use a strong password for production databases. Never use default or simple passwords.
+    </Warning>
+    
+  </Step>
+  
+  <Step title="Configure Environment Variables">
+    
+    Add database credentials to your `.env` file:
+    
+    ```bash .env
+    DB_NAME=youtube_manager
+    DB_USER=youtube_user
+    DB_PASS=your_password_here
+    DB_HOST=localhost
+    DB_PORT=3306
+    ```
+    
+    <Info>
+      These values are loaded via python-decouple in settings.py:69-73.
+    </Info>
+    
+  </Step>
+  
+  <Step title="Install Python MySQL Driver">
+    
+    The `mysqlclient` package is required (requirements.txt:15):
+    
+    ```bash
+    pip install mysqlclient
+    ```
+    
+    **Dependencies:**
+    
+    On Ubuntu/Debian:
+    ```bash
+    sudo apt install python3-dev default-libmysqlclient-dev build-essential
+    ```
+    
+    On macOS:
+    ```bash
+    brew install mysql-client
+    export PATH="/usr/local/opt/mysql-client/bin:$PATH"
+    ```
+    
+    On Windows:
+    - Install Visual C++ Build Tools
+    - Or use pre-built wheel from [PyPI](https://pypi.org/project/mysqlclient/#files)
+    
+  </Step>
+  
+  <Step title="Test Database Connection">
+    
+    Verify Django can connect to the database:
+    
+    ```bash
+    python manage.py check --database default
+    ```
+    
+    Test connection directly:
+    
+    ```bash
+    python manage.py dbshell
+    ```
+    
+    If successful, you'll see the MySQL prompt:
+    ```
+    mysql>
+    ```
+    
+    Exit with:
+    ```sql
+    EXIT;
+    ```
+    
+  </Step>
+  
+  <Step title="Run Database Migrations">
+    
+    Create database tables by running Django migrations:
+    
+    ```bash
+    python manage.py migrate
+    ```
+    
+    <Info>
+      This creates all necessary tables including Django's built-in tables and custom models like `VideoGuardado` and `VideoSubido`.
+    </Info>
+    
+    Expected output:
+    ```
+    Running migrations:
+      Applying contenttypes.0001_initial... OK
+      Applying auth.0001_initial... OK
+      Applying admin.0001_initial... OK
+      ...
+      Applying core.0001_initial... OK
+    ```
+    
+  </Step>
+</Steps>
+
+## Database Models
+
+The application includes custom models for managing YouTube videos:
+
+### VideoGuardado
+
+Stores videos saved by users for later viewing:
+- User reference (ForeignKey)
+- YouTube video ID
+- Video title, description, channel
+- Thumbnail URL
+- Timestamp (fecha_guardado)
+
+### VideoSubido
+
+Tracks videos uploaded to YouTube through the application:
+- User reference (ForeignKey)
+- YouTube video ID
+- Video metadata (title, description)
+- Privacy status (public, private, unlisted)
+- Upload timestamp (fecha_subida)
+
+## Connection Testing
+
+Verify your database configuration:
+
+```bash
+# Check Django configuration
+python manage.py check
+
+# Test database connection
+python manage.py dbshell
+
+# Verify migrations status
+python manage.py showmigrations
+
+# Test in Django shell
+python manage.py shell
+```
+
+```python Django Shell
+# In Python shell
+from django.db import connection
+from django.db.utils import OperationalError
+
+try:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT VERSION()")
+        version = cursor.fetchone()
+        print(f"MySQL version: {version[0]}")
+        print("✓ Database connection successful!")
+except OperationalError as e:
+    print(f"✗ Database connection failed: {e}")
+```
+
+## Performance Optimization
+
+<Tip>
+  **Recommended MySQL Configuration for Production**
+</Tip>
+
+### Indexing
+
+Ensure proper indexes are created during migrations. Key fields:
+- User foreign keys
+- Video IDs
+- Timestamps for ordering
+
+### Connection Pooling
+
+For high-traffic deployments, consider connection pooling:
+
+```python settings.py
+DATABASES = {
+    'default': {
+        # ... existing config ...
+        'CONN_MAX_AGE': 600,  # Connection lifetime in seconds
+    }
+}
+```
+
+### Query Optimization
+
+<CodeGroup>
+
+```python Efficient Queries
+# Use select_related for foreign keys
+videos = VideoGuardado.objects.select_related('user').all()
+
+# Use only() to limit fields
+videos = VideoGuardado.objects.only('titulo', 'video_id').all()
+
+# Use prefetch_related for reverse foreign keys
+users = User.objects.prefetch_related('videoguardado_set').all()
+```
+
+```python views.py Example
+@login_required
+def mi_lista(request):
+    # Efficient query with ordering (views.py:171)
+    videos = VideoGuardado.objects.filter(
+        user=request.user
+    ).order_by('-fecha_guardado')
+    return render(request, 'mi_lista.html', {'videos': videos})
+```
+
+</CodeGroup>
+
+## Backup and Restore
+
+### Backup Database
+
+```bash
+# Full database backup
+mysqldump -u youtube_user -p youtube_manager > backup.sql
+
+# With timestamp
+mysqldump -u youtube_user -p youtube_manager > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Compressed backup
+mysqldump -u youtube_user -p youtube_manager | gzip > backup.sql.gz
+```
+
+### Restore Database
+
+```bash
+# Restore from backup
+mysql -u youtube_user -p youtube_manager < backup.sql
+
+# Restore from compressed backup
+gunzip < backup.sql.gz | mysql -u youtube_user -p youtube_manager
+```
+
+<Warning>
+  Always test backups by restoring to a test database before relying on them for production.
+</Warning>
+
+## Troubleshooting
+
+### Error: Can't connect to MySQL server
+
+**Symptoms:**
+```
+django.db.utils.OperationalError: (2003, "Can't connect to MySQL server on 'localhost' (10061)")
+```
+
+**Solutions:**
+1. Verify MySQL is running:
+   ```bash
+   sudo systemctl status mysql
+   ```
+2. Check `DB_HOST` and `DB_PORT` in `.env`
+3. Verify firewall allows connection on port 3306
+4. Test connection with MySQL client:
+   ```bash
+   mysql -h localhost -u youtube_user -p
+   ```
+
+### Error: Access denied for user
+
+**Symptoms:**
+```
+django.db.utils.OperationalError: (1045, "Access denied for user 'youtube_user'@'localhost' (using password: YES)")
+```
+
+**Solutions:**
+1. Verify credentials in `.env` match database
+2. Check user exists and has correct host:
+   ```sql
+   SELECT User, Host FROM mysql.user WHERE User = 'youtube_user';
+   ```
+3. Verify password is correct
+4. Grant permissions again if needed
+
+### Error: Unknown database
+
+**Symptoms:**
+```
+django.db.utils.OperationalError: (1049, "Unknown database 'youtube_manager'")
+```
+
+**Solution:**
+Create the database:
+```sql
+CREATE DATABASE youtube_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+### Error: Incorrect string value
+
+**Symptoms:**
+```
+Incorrect string value: '\xF0\x9F\x98\x80...' for column 'titulo'
+```
+
+**Cause:** Database/table not using `utf8mb4` character set.
+
+**Solution:**
+Convert existing database:
+```sql
+ALTER DATABASE youtube_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+ALTER TABLE core_videoguardado CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+ALTER TABLE core_videosubido CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+### Error: mysqlclient installation fails
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install python3-dev default-libmysqlclient-dev build-essential pkg-config
+pip install mysqlclient
+```
+
+**macOS:**
+```bash
+brew install mysql-client pkg-config
+export PKG_CONFIG_PATH="/usr/local/opt/mysql-client/lib/pkgconfig"
+pip install mysqlclient
+```
+
+**Windows:**
+Download pre-built wheel from [PyPI](https://pypi.org/project/mysqlclient/#files)
+
+## Production Considerations
+
+<Warning>
+  **Production Database Requirements:**
+  
+  - Use managed database service (AWS RDS, Google Cloud SQL, etc.)
+  - Enable automated backups
+  - Set up replication for high availability
+  - Monitor database performance and query times
+  - Implement proper connection pooling
+  - Use SSL/TLS for database connections
+</Warning>
+
+### Managed Database Services
+
+**AWS RDS:**
+- MySQL 8.0 compatible
+- Automated backups
+- Multi-AZ deployment for HA
+
+**Google Cloud SQL:**
+- Native GCP integration
+- Automatic storage increase
+- Point-in-time recovery
+
+**DigitalOcean Managed Databases:**
+- Simple setup
+- Automated backups
+- Connection pooling built-in
+
+### SSL/TLS Connections
+
+For production, enable SSL:
+
+```python settings.py
+DATABASES = {
+    'default': {
+        # ... existing config ...
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'ssl': {
+                'ca': '/path/to/ca-cert.pem',
+            }
+        },
+    }
+}
+```
+
+## Next Steps
+
+<Card title="Environment Variables" icon="gear" href="/configuration/environment">
+  Configure database credentials in environment variables
+</Card>
+
+<Card title="Google OAuth Setup" icon="google" href="/configuration/google-oauth">
+  Set up OAuth for YouTube API access
+</Card>
+
+<Card title="API Reference" icon="code" href="/api/models">
+  Explore the database models and API
+</Card>

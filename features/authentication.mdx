@@ -1,0 +1,253 @@
+---
+title: Authentication
+description: Google OAuth 2.0 integration for secure YouTube API access
+---
+
+## Overview
+
+YouTube Manager uses Google OAuth 2.0 to authenticate users and obtain authorized access to the YouTube Data API. The authentication system handles both user login and API authorization in a single flow.
+
+<CardGroup cols={2}>
+  <Card title="OAuth 2.0 Flow" icon="lock">
+    Secure authorization with Google's identity platform
+  </Card>
+  <Card title="Auto-Registration" icon="user-plus">
+    Automatic user account creation on first login
+  </Card>
+  <Card title="Session Management" icon="database">
+    Credentials stored securely in Django sessions
+  </Card>
+  <Card title="YouTube API Access" icon="youtube">
+    Direct integration with YouTube Data API v3
+  </Card>
+</CardGroup>
+
+## OAuth Flow
+
+<Steps>
+  <Step title="User initiates login">
+    When a user clicks "Login with Google", they are redirected to the `google_login` view which starts the OAuth flow.
+    
+    ```python
+    # views.py:29-44
+    def google_login(request):
+        # Inicia el flujo OAuth
+        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+            settings.GOOGLE_CLIENT_SECRETS_FILE,
+            scopes=settings.SCOPES
+        )
+        flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+        
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true'
+        )
+        
+        # Guardamos el estado para verificarlo después
+        request.session['state'] = state
+        return redirect(authorization_url)
+    ```
+    
+    The `state` parameter is stored in the session for CSRF protection.
+  </Step>
+  
+  <Step title="User grants permissions">
+    The user is redirected to Google's authorization server where they:
+    - Select their Google account
+    - Review requested permissions
+    - Grant or deny access
+  </Step>
+  
+  <Step title="Callback with authorization code">
+    Google redirects back to the application's callback URL with an authorization code.
+    
+    ```python
+    # views.py:46-56
+    def google_callback(request):
+        state = request.session.get('state')
+        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+            settings.GOOGLE_CLIENT_SECRETS_FILE,
+            scopes=settings.SCOPES,
+            state=state
+        )
+        flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+
+        # Intercambia el código por tokens
+        flow.fetch_token(authorization_response=request.build_absolute_uri())
+        credentials = flow.credentials
+    ```
+  </Step>
+  
+  <Step title="Exchange code for tokens">
+    The authorization code is exchanged for access and refresh tokens that allow API calls.
+  </Step>
+  
+  <Step title="Retrieve user information">
+    The OAuth2 API is used to fetch the user's profile information:
+    
+    ```python
+    # views.py:59-68
+    session = requests.session()
+    cached_session = requests.adapters.HTTPAdapter(max_retries=3)
+    session.mount('https://', cached_session)
+    
+    user_info_service = build('oauth2', 'v2', credentials=credentials)
+    user_info = user_info_service.userinfo().get().execute()
+    
+    email = user_info.get('email')
+    first_name = user_info.get('given_name', '')
+    ```
+  </Step>
+  
+  <Step title="Create or login user">
+    The system automatically creates a Django user account or logs in an existing user:
+    
+    ```python
+    # views.py:70-73
+    if email:
+        user, created = User.objects.get_or_create(
+            username=email, 
+            defaults={'email': email, 'first_name': first_name}
+        )
+        login(request, user)
+    ```
+  </Step>
+  
+  <Step title="Store credentials in session">
+    The OAuth credentials are stored in the Django session for subsequent API calls:
+    
+    ```python
+    # views.py:75-83
+    request.session['credentials'] = {
+        'token': credentials.token,
+        'refresh_token': credentials.refresh_token,
+        'token_uri': credentials.token_uri,
+        'client_id': credentials.client_id,
+        'client_secret': credentials.client_secret,
+        'scopes': credentials.scopes
+    }
+    return redirect('inicio')
+    ```
+  </Step>
+</Steps>
+
+## Required OAuth Scopes
+
+The application requests the following OAuth 2.0 scopes defined in `settings.py:129-135`:
+
+```python
+SCOPES = [
+    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.upload',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid'
+]
+```
+
+<AccordionGroup>
+  <Accordion title="youtube - Full YouTube Access">
+    Allows reading and managing YouTube account data, including videos, playlists, and subscriptions.
+  </Accordion>
+  
+  <Accordion title="youtube.upload - Upload Videos">
+    Grants permission to upload videos to the user's YouTube channel.
+  </Accordion>
+  
+  <Accordion title="userinfo.email & userinfo.profile">
+    Provides access to the user's email address and basic profile information for account creation.
+  </Accordion>
+  
+  <Accordion title="openid">
+    Enables OpenID Connect authentication for secure identity verification.
+  </Accordion>
+</AccordionGroup>
+
+## Session Credential Storage
+
+Credentials are stored in the Django session and reconstructed for each API call:
+
+```python
+# views.py:94-102
+def get_youtube_service(request):
+    # Reconstruye las credenciales desde la sesión
+    creds_data = request.session.get('credentials')
+    if not creds_data:
+        return None
+    
+    from google.oauth2.credentials import Credentials
+    creds = Credentials(**creds_data)
+    return build('youtube', 'v3', credentials=creds)
+```
+
+This helper function is used throughout the application to create authenticated YouTube API clients.
+
+## Login and Logout
+
+### Login View
+
+The basic login view (`views.py:24-27`) displays the login page or redirects authenticated users:
+
+```python
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('inicio')
+    return render(request, 'login.html')
+```
+
+### Logout View
+
+The logout view (`views.py:88-90`) clears the Django session:
+
+```python
+def logout_view(request):
+    logout(request)
+    return redirect('login')
+```
+
+<Note>
+When a user logs out, their OAuth credentials are removed from the session, but the tokens remain valid until they expire. Users will need to re-authenticate to use YouTube API features.
+</Note>
+
+## Security Considerations
+
+<Warning>
+**Development Environment Settings**: The application uses `OAUTHLIB_INSECURE_TRANSPORT` to allow HTTP in local development (settings.py:123). This MUST be removed in production.
+</Warning>
+
+### CSRF Protection
+
+The `state` parameter provides CSRF protection by verifying that the callback request originated from the same session that initiated the OAuth flow.
+
+### Credential Storage
+
+Credentials are stored in Django's session backend. In production:
+- Use encrypted session cookies or database-backed sessions
+- Set `SESSION_COOKIE_SECURE = True` to require HTTPS
+- Configure `SESSION_COOKIE_HTTPONLY = True` to prevent XSS attacks
+
+### Scope Relaxation
+
+The application sets `OAUTHLIB_RELAX_TOKEN_SCOPE` (settings.py:125) to handle minor scope variations. Review this setting for production use.
+
+## URL Routes
+
+The authentication system uses the following URL patterns (urls.py:8-12):
+
+| Route | View | Purpose |
+|-------|------|----------|
+| `/login/` | `login_view` | Display login page |
+| `/logout/` | `logout_view` | Log out user |
+| `/oauth/login/` | `google_login` | Initiate OAuth flow |
+| `/oauth/callback/` | `google_callback` | Handle OAuth callback |
+
+## Auto-Registration Flow
+
+Users are automatically registered on their first login:
+
+1. Email is used as the username for uniqueness
+2. First name is extracted from Google profile
+3. `get_or_create()` ensures no duplicate accounts
+4. Users are immediately logged in after creation
+
+This eliminates the need for a separate registration form while maintaining user account integrity.

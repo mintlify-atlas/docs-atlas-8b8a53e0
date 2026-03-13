@@ -1,0 +1,310 @@
+---
+title: 'Forms'
+description: 'Django form definitions for video upload functionality'
+---
+
+The YouTube Manager uses Django ModelForms to handle video uploads with proper validation and styling.
+
+## VideoUploadForm
+
+**Location:** `core/forms.py:4-17`
+
+A ModelForm for uploading videos to YouTube with metadata.
+
+### Form Definition
+
+```python
+from django import forms
+from .models import VideoSubido
+
+class VideoUploadForm(forms.ModelForm):
+    archivo_video = forms.FileField(
+        label="Selecciona tu video", 
+        widget=forms.FileInput(attrs={'class': 'form-control', 'accept': 'video/*'})
+    )
+
+    class Meta:
+        model = VideoSubido
+        fields = ['titulo', 'descripcion', 'estado']
+        widgets = {
+            'titulo': forms.TextInput(attrs={'class': 'form-control'}),
+            'descripcion': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+            'estado': forms.Select(attrs={'class': 'form-select'}),
+        }
+```
+
+### Fields
+
+<ParamField path="archivo_video" type="FileField" required>
+  Video file to upload. Accepts video/* MIME types.
+  
+  **Widget:** `FileInput` with Bootstrap `form-control` class
+  
+  **Label:** "Selecciona tu video"
+  
+  **Attributes:**
+  - `class`: `'form-control'` (Bootstrap styling)
+  - `accept`: `'video/*'` (File type restriction)
+</ParamField>
+
+<ParamField path="titulo" type="CharField" required>
+  Video title (from VideoSubido model).
+  
+  **Widget:** `TextInput` with Bootstrap `form-control` class
+  
+  **Max Length:** 255 characters
+</ParamField>
+
+<ParamField path="descripcion" type="TextField" required>
+  Video description (from VideoSubido model).
+  
+  **Widget:** `Textarea` with Bootstrap `form-control` class and 3 rows
+  
+  **Attributes:**
+  - `class`: `'form-control'`
+  - `rows`: `3`
+</ParamField>
+
+<ParamField path="estado" type="ChoiceField" required>
+  Privacy status for the video (from VideoSubido model).
+  
+  **Widget:** `Select` with Bootstrap `form-select` class
+  
+  **Choices:**
+  - `private` - Privado (default)
+  - `public` - Público
+  - `unlisted` - No listado
+</ParamField>
+
+### Meta Configuration
+
+| Property | Value |
+|----------|-------|
+| **model** | `VideoSubido` |
+| **fields** | `['titulo', 'descripcion', 'estado']` |
+
+<Note>
+The `archivo_video` field is defined separately from the Meta class because it's not part of the VideoSubido model - it's used only during the upload process and not stored in the database.
+</Note>
+
+### Widget Customization
+
+All form widgets are customized with Bootstrap 5 CSS classes for consistent styling:
+
+- **Text inputs**: Use `form-control` class
+- **Textarea**: Uses `form-control` with custom `rows` attribute
+- **Select dropdown**: Uses `form-select` class (Bootstrap 5 specific)
+- **File input**: Uses `form-control` with `accept` attribute for file filtering
+
+### Form Usage
+
+#### In Views
+
+```python
+from .forms import VideoUploadForm
+
+@login_required
+def subir_video_youtube(request):
+    if request.method == 'POST':
+        form = VideoUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            video_file = request.FILES['archivo_video']
+            titulo = form.cleaned_data['titulo']
+            descripcion = form.cleaned_data['descripcion']
+            estado = form.cleaned_data['estado']
+            # Process upload...
+    else:
+        form = VideoUploadForm()
+    
+    return render(request, 'subir_video.html', {'form': form})
+```
+
+#### In Templates
+
+```django
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn-primary">Subir Video</button>
+</form>
+```
+
+### Validation
+
+The form inherits validation from the VideoSubido model:
+
+- **titulo**: Required, max 255 characters
+- **descripcion**: Required, can be any length
+- **estado**: Required, must be one of the predefined choices
+- **archivo_video**: Required, must be a valid file upload
+
+### Accessing Form Data
+
+After validation, access cleaned data:
+
+```python
+if form.is_valid():
+    # Access model fields
+    titulo = form.cleaned_data['titulo']
+    descripcion = form.cleaned_data['descripcion']
+    estado = form.cleaned_data['estado']
+    
+    # Access uploaded file
+    video_file = request.FILES['archivo_video']
+    filename = video_file.name
+    file_size = video_file.size
+```
+
+### Complete Upload Example
+
+From `views.py:182-259`:
+
+```python
+from django.core.files.storage import FileSystemStorage
+from googleapiclient.http import MediaFileUpload
+from .forms import VideoUploadForm
+from .models import VideoSubido
+
+@login_required
+def subir_video_youtube(request):
+    if request.method == 'POST':
+        form = VideoUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            video_file = request.FILES['archivo_video']
+            
+            # 1. Save file temporarily
+            fs = FileSystemStorage()
+            filename = fs.save(video_file.name, video_file)
+            filepath = fs.path(filename)
+            
+            try:
+                youtube = get_youtube_service(request)
+                
+                # 2. Configure metadata from form
+                body = {
+                    'snippet': {
+                        'title': form.cleaned_data['titulo'],
+                        'description': form.cleaned_data['descripcion'],
+                        'tags': ['TubeManager', 'Django'],
+                        'categoryId': '22'
+                    },
+                    'status': {
+                        'privacyStatus': form.cleaned_data['estado']
+                    }
+                }
+
+                # 3. Upload to YouTube
+                media = MediaFileUpload(filepath, chunksize=-1, resumable=True)
+                request_upload = youtube.videos().insert(
+                    part=','.join(body.keys()),
+                    body=body,
+                    media_body=media
+                )
+                response = request_upload.execute()
+                
+                # 4. Save reference in database
+                VideoSubido.objects.create(
+                    user=request.user,
+                    video_id=response['id'],
+                    titulo=form.cleaned_data['titulo'],
+                    descripcion=form.cleaned_data['descripcion'],
+                    estado=form.cleaned_data['estado']
+                )
+                
+                messages.success(request, f"Video subido con éxito! ID: {response['id']}")
+                return redirect('mis_subidos')
+
+            except Exception as e:
+                messages.error(request, f"Error al subir: {e}")
+            finally:
+                # Cleanup temporary file
+                if os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except PermissionError:
+                        pass
+    else:
+        form = VideoUploadForm()
+
+    return render(request, 'subir_video.html', {'form': form})
+```
+
+<Tip>
+When using `FileField` in forms, always remember to:
+1. Include `enctype="multipart/form-data"` in the HTML form tag
+2. Pass both `request.POST` and `request.FILES` to the form constructor
+3. Access files via `request.FILES` dictionary after validation
+</Tip>
+
+## Form Rendering Options
+
+### As Paragraph
+
+```django
+{{ form.as_p }}
+```
+
+### As Table
+
+```django
+<table>
+    {{ form.as_table }}
+</table>
+```
+
+### Individual Fields
+
+```django
+<div class="mb-3">
+    {{ form.titulo.label_tag }}
+    {{ form.titulo }}
+    {{ form.titulo.errors }}
+</div>
+
+<div class="mb-3">
+    {{ form.descripcion.label_tag }}
+    {{ form.descripcion }}
+    {{ form.descripcion.errors }}
+</div>
+
+<div class="mb-3">
+    {{ form.estado.label_tag }}
+    {{ form.estado }}
+    {{ form.estado.errors }}
+</div>
+
+<div class="mb-3">
+    {{ form.archivo_video.label_tag }}
+    {{ form.archivo_video }}
+    {{ form.archivo_video.errors }}
+</div>
+```
+
+## Error Handling
+
+### Display Form Errors
+
+```django
+{% if form.errors %}
+    <div class="alert alert-danger">
+        <ul>
+            {% for field in form %}
+                {% for error in field.errors %}
+                    <li>{{ field.label }}: {{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+        </ul>
+    </div>
+{% endif %}
+```
+
+### Check Specific Field Errors
+
+```python
+if form.is_valid():
+    # Process form
+    pass
+else:
+    if 'archivo_video' in form.errors:
+        print("File upload error:", form.errors['archivo_video'])
+```

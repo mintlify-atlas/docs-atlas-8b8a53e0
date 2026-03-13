@@ -1,80 +1,388 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get up and running with YouTube Manager in minutes - from first login to managing your video content.
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide walks you through the essential features of YouTube Manager, from authentication to uploading your first video. You'll learn how to search for videos, save them to your collection, and upload content to your YouTube channel.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Before starting, ensure you've completed the [installation guide](/installation) and have the development server running.
 </Note>
+
+## Getting Started
+
+<Steps>
+  <Step title="Start the Development Server">
+    Activate your virtual environment and start the Django development server:
+
+    ```bash
+    # Activate virtual environment
+    source venv/bin/activate  # Linux/macOS
+    # or
+    venv\Scripts\activate  # Windows
+
+    # Start server
+    python manage.py runserver
+    ```
+
+    The server will start at `http://127.0.0.1:8000/`
+
+    <Info>
+      Keep this terminal window open while working with the application.
+    </Info>
+  </Step>
+
+  <Step title="Access the Application">
+    Open your web browser and navigate to:
+
+    ```
+    http://localhost:8000
+    ```
+
+    You'll see the login page prompting you to authenticate with Google.
+  </Step>
+
+  <Step title="Authenticate with Google OAuth">
+    Click the Google login button to start the OAuth flow:
+
+    **What happens under the hood:**
+
+    ```python
+    # views.py:29 - OAuth flow initialization
+    flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        settings.GOOGLE_CLIENT_SECRETS_FILE,
+        scopes=settings.SCOPES
+    )
+    flow.redirect_uri = config('GOOGLE_CALLBACK_URL')
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true'
+    )
+    ```
+
+    The application will:
+    1. Redirect you to Google's authorization page
+    2. Request permissions for YouTube and profile access
+    3. Automatically create or retrieve your user account
+    4. Store OAuth credentials in your session
+
+    <Warning>
+      Make sure you grant all requested permissions. YouTube upload functionality requires full YouTube API access.
+    </Warning>
+  </Step>
+
+  <Step title="Navigate to Home Dashboard">
+    After successful authentication, you'll be redirected to the home dashboard (`/inicio`). This is your central hub for accessing all features:
+
+    - Search for YouTube videos
+    - View your saved video collection
+    - Upload new videos
+    - Manage uploaded videos
+  </Step>
+</Steps>
+
+## Core Workflows
+
+### Searching for Videos
+
+<Steps>
+  <Step title="Navigate to Video Search">
+    From the home dashboard, click on "Buscar Videos" (Search Videos) or navigate to `/buscar/`.
+  </Step>
+
+  <Step title="Enter Search Query">
+    Enter your search terms in the search box and submit. The application queries YouTube's API:
+
+    ```python
+    # views.py:118 - YouTube API search
+    request_search = youtube.search().list(
+        part="snippet",
+        maxResults=9,
+        q=query,
+        type="video",
+        videoEmbeddable='true'
+    )
+    response = request_search.execute()
+    ```
+
+    Search results include:
+    - Video ID
+    - Title and description
+    - Channel name
+    - High-quality thumbnail
+  </Step>
+
+  <Step title="Browse Results">
+    The search returns up to 9 embeddable videos per query. Each result displays:
+    - Video thumbnail
+    - Title
+    - Channel name
+    - Description snippet
+    - "Save" button to add to your collection
+  </Step>
+</Steps>
+
+### Saving Videos to Your Collection
+
+<Steps>
+  <Step title="Save from Search Results">
+    Click the "Save" button on any video from search results. This triggers:
+
+    ```python
+    # views.py:154 - Saving video to database
+    VideoGuardado.objects.get_or_create(
+        user=request.user,
+        video_id=video_id,
+        defaults={
+            'titulo': titulo,
+            'canal': canal,
+            'descripcion': descripcion,
+            'miniatura_url': miniatura
+        }
+    )
+    ```
+
+    The video is saved with full metadata to your personal collection.
+  </Step>
+
+  <Step title="View Your Saved Videos">
+    Navigate to "Mi Lista" (My List) or `/mi_lista/` to see all saved videos:
+
+    ```python
+    # views.py:171 - Retrieving user's saved videos
+    videos = VideoGuardado.objects.filter(user=request.user).order_by('-fecha_guardado')
+    ```
+
+    Videos are displayed in reverse chronological order (newest first).
+  </Step>
+
+  <Step title="Manage Saved Videos">
+    From your collection, you can:
+    - View video details
+    - Click through to watch on YouTube
+    - Delete videos from your collection
+
+    <Note>
+      The `VideoGuardado` model uses a unique constraint on `(user, video_id)` to prevent duplicate saves.
+    </Note>
+  </Step>
+</Steps>
+
+### Uploading Videos to YouTube
+
+<Steps>
+  <Step title="Navigate to Upload Page">
+    From the dashboard, click "Subir Video" (Upload Video) or navigate to `/subir_video/`.
+  </Step>
+
+  <Step title="Fill Upload Form">
+    The upload form requires:
+
+    - **Video File**: Select a video file from your computer (accepts all video formats)
+    - **Title**: Video title (max 255 characters)
+    - **Description**: Video description (text area)
+    - **Privacy Status**: Choose from:
+      - `private` - Only you can see it
+      - `public` - Anyone can search and view
+      - `unlisted` - Anyone with the link can view
+  </Step>
+
+  <Step title="Submit Upload">
+    Click submit to start the upload process:
+
+    ```python
+    # views.py:202 - YouTube upload configuration
+    body = {
+        'snippet': {
+            'title': form.cleaned_data['titulo'],
+            'description': form.cleaned_data['descripcion'],
+            'tags': ['TubeManager', 'Django'],
+            'categoryId': '22'
+        },
+        'status': {
+            'privacyStatus': form.cleaned_data['estado']
+        }
+    }
+
+    media = MediaFileUpload(filepath, chunksize=-1, resumable=True)
+    request_upload = youtube.videos().insert(
+        part=','.join(body.keys()),
+        body=body,
+        media_body=media
+    )
+    response = request_upload.execute()
+    ```
+
+    The application:
+    1. Saves the file temporarily to `media/` directory
+    2. Uploads to YouTube using resumable upload
+    3. Saves video reference to database
+    4. Deletes temporary file
+
+    <Info>
+      Uploads are resumable, meaning interrupted uploads can continue from where they stopped.
+    </Info>
+  </Step>
+
+  <Step title="View Upload Confirmation">
+    Upon successful upload, you'll receive:
+    - Success message with video ID
+    - Redirect to "Mis Subidos" (My Uploads)
+
+    The video is now live on YouTube with your chosen privacy setting.
+  </Step>
+</Steps>
+
+### Managing Uploaded Videos
+
+<Steps>
+  <Step title="View Your Uploads">
+    Navigate to "Mis Subidos" (My Uploads) or `/mis_subidos/` to see all videos you've uploaded through the platform:
+
+    ```python
+    # views.py:263 - Retrieving uploaded videos
+    videos = VideoSubido.objects.filter(user=request.user).order_by('-fecha_subida')
+    ```
+  </Step>
+
+  <Step title="Change Video Privacy">
+    Click on a video's privacy settings to change between private, public, or unlisted:
+
+    ```python
+    # views.py:276 - Updating video privacy
+    youtube.videos().update(
+        part='status',
+        body={
+            'id': video_local.video_id,
+            'status': {'privacyStatus': nuevo_estado}
+        }
+    ).execute()
+
+    video_local.estado = nuevo_estado
+    video_local.save()
+    ```
+
+    The change is applied immediately on YouTube and synced to your local database.
+  </Step>
+
+  <Step title="Delete Videos">
+    Remove videos from YouTube directly through the interface:
+
+    ```python
+    # views.py:302 - Deleting video
+    youtube.videos().delete(id=video_local.video_id).execute()
+    video_local.delete()
+    ```
+
+    <Warning>
+      Deleting a video is permanent. The video will be removed from YouTube and cannot be recovered.
+    </Warning>
+  </Step>
+</Steps>
+
+## Understanding the Data Models
+
+### VideoGuardado (Saved Videos)
+
+Stores your saved video collection:
+
+```python
+class VideoGuardado(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    video_id = models.CharField(max_length=50)
+    titulo = models.CharField(max_length=255)
+    canal = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    miniatura_url = models.URLField()
+    fecha_guardado = models.DateTimeField(auto_now_add=True)
+```
+
+### VideoSubido (Uploaded Videos)
+
+Tracks videos you've uploaded:
+
+```python
+class VideoSubido(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    video_id = models.CharField(max_length=50, unique=True)
+    titulo = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='private')
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+```
+
+## Common Use Cases
+
+### Research & Inspiration
+
+1. Search for videos in your niche
+2. Save interesting content to your collection
+3. Review saved videos for content ideas
+4. Access your collection anytime from the dashboard
+
+### Content Publishing
+
+1. Upload videos with private status for review
+2. Test video playback and metadata
+3. Change to public when ready to publish
+4. Track all uploaded content in one place
+
+### Multi-User Management
+
+Each user has isolated collections:
+- Separate saved video libraries per user
+- Individual OAuth credentials per session
+- User-specific upload tracking
+
+## Tips & Best Practices
+
+<Note>
+  **OAuth Session Management**: Your Google credentials are stored in Django sessions. If you logout or your session expires, you'll need to re-authenticate.
+</Note>
+
+<Info>
+  **Video Category**: All uploads default to category ID "22" (People & Blogs). You can modify this in `views.py:207` for different content types.
+</Info>
+
+<Warning>
+  **Temporary Files**: The application automatically cleans up temporary video files after upload. Ensure the `media/` directory has sufficient disk space for your largest videos.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Google OAuth Configuration" icon="key" href="/configuration/google-oauth">
+    Detailed guide for production OAuth setup
+  </Card>
+  
+  <Card title="Deployment Guide" icon="server" href="/deployment/overview">
+    Deploy YouTube Manager to production
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Authentication Issues
+
+If redirected back to login after OAuth:
+- Check `client_secret.json` is in project root
+- Verify redirect URI matches Google Console
+- Ensure all required scopes are approved
+
+### Upload Failures
+
+If video uploads fail:
+- Check file size (YouTube has upload limits)
+- Verify OAuth token hasn't expired (re-authenticate)
+- Ensure sufficient disk space in `media/` directory
+- Check YouTube API quota limits
+
+### Search Returns No Results
+
+If searches return empty:
+- Verify OAuth credentials are valid
+- Check YouTube Data API is enabled
+- Try different search terms
+- Ensure `videoEmbeddable='true'` filter isn't too restrictive
